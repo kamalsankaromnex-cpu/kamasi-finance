@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.env
+.env.*
+!.env.example
+coverage
+*.log
+prisma/dev.db
+prisma/dev.db-*
+prisma/scenario-*.db
+prisma/data

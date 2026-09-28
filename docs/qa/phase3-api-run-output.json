@@ -1,0 +1,135 @@
+[
+  {
+    "id": "P3-AUTH-001",
+    "scenario": "Register synthetic owner household",
+    "actual": "HTTP 201; role OWNER",
+    "status": "PASS",
+    "severity": "P0"
+  },
+  {
+    "id": "P3-SEC-001",
+    "scenario": "Register second isolated household",
+    "actual": "HTTP 201",
+    "status": "PASS",
+    "severity": "P0"
+  },
+  {
+    "id": "P3-ACCT-001",
+    "scenario": "Create two synthetic accounts",
+    "actual": "HTTP 201/201",
+    "status": "PASS",
+    "severity": "P0"
+  },
+  {
+    "id": "P3-SEC-002",
+    "scenario": "Second household cannot read first household account",
+    "actual": "HTTP 404",
+    "status": "PASS",
+    "severity": "P0"
+  },
+  {
+    "id": "P3-MOD-001",
+    "scenario": "Create synthetic budget, asset, liability, and investment fixtures",
+    "actual": "budget/asset/liability/investment HTTP 201/201/201/201",
+    "status": "PASS",
+    "severity": "P1"
+  },
+  {
+    "id": "P3-SAL-001",
+    "scenario": "Reject invalid accounting month and negative salary components",
+    "actual": "month HTTP 400; negative earning HTTP 400",
+    "status": "PASS",
+    "severity": "P1"
+  },
+  {
+    "id": "P3-SAL-002",
+    "scenario": "Calculate a valid payslip using exact decimal components",
+    "actual": "HTTP 201; gross 1000, net 900",
+    "status": "PASS",
+    "severity": "P0"
+  },
+  {
+    "id": "P3-SAL-003",
+    "scenario": "Reject negative, excessive, and malformed-date salary confirmation",
+    "actual": "negative/over/date HTTP 400/400/400",
+    "status": "PASS",
+    "severity": "P0"
+  },
+  {
+    "id": "P3-SAL-004",
+    "scenario": "Partial salary credit posts once and response minimizes account fields",
+    "actual": "HTTP 200; balance 1500; account number returned False",
+    "status": "PASS",
+    "severity": "P0"
+  },
+  {
+    "id": "P3-SAL-005",
+    "scenario": "Repeated confirmation does not double-credit or regenerate history",
+    "actual": "repeat HTTP 409; balance 1500; regeneration HTTP 409",
+    "status": "PASS",
+    "severity": "P0"
+  },
+  {
+    "id": "P3-INC-001",
+    "scenario": "Reject invalid occurrence amount and accounting dates",
+    "actual": "negative/zero/bad-date/period HTTP 400/400/400/400",
+    "status": "PASS",
+    "severity": "P0"
+  },
+  {
+    "id": "P3-INC-002",
+    "scenario": "Create valid income occurrence with validated period",
+    "actual": "HTTP 201; expected 50",
+    "status": "PASS",
+    "severity": "P1"
+  },
+  {
+    "id": "P3-LED-001",
+    "scenario": "Receipt updates income occurrence and account; retry does not duplicate",
+    "actual": "receipt/replay HTTP 201/200; received 20; outstanding 30",
+    "status": "PASS",
+    "severity": "P0"
+  },
+  {
+    "id": "P3-LED-005",
+    "scenario": "Over-receipt rollback leaves account and occurrence untouched",
+    "actual": "over-receipt HTTP 400; account 1520/1520; occurrence received/outstanding 20/30",
+    "status": "PASS",
+    "severity": "P0"
+  },
+  {
+    "id": "P3-LED-002",
+    "scenario": "Transfer conserves cash and expense retry/reversal are single-effect",
+    "actual": "transfer/expense/replay/void/revoid HTTP 201/201/200/200/200",
+    "status": "PASS",
+    "severity": "P0"
+  },
+  {
+    "id": "P3-LED-003",
+    "scenario": "Bill payment and retry update outstanding and balance once",
+    "actual": "rule/payment/replay HTTP 201/201/200; paid 25, outstanding 75",
+    "status": "PASS",
+    "severity": "P0"
+  },
+  {
+    "id": "P3-LED-004",
+    "scenario": "Goal contribution updates goal and ledger once on retry",
+    "actual": "goal/contribution/replay HTTP 201/200/200; current amount 40",
+    "status": "PASS",
+    "severity": "P0"
+  },
+  {
+    "id": "P3-CON-001",
+    "scenario": "Concurrent identical transaction requests produce at most one ledger posting",
+    "actual": "parallel HTTP 201/200; retry HTTP 200; matching ledger rows 1",
+    "status": "PASS",
+    "severity": "P0"
+  },
+  {
+    "id": "P3-REC-001",
+    "scenario": "Independent balance oracle reconciles persisted active ledger effects",
+    "actual": "main opening+income-expense-transfer=1305/1305; destination opening+transfer=320/320",
+    "status": "PASS",
+    "severity": "P0"
+  }
+]

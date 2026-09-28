@@ -1,0 +1,51 @@
+# Phase 3A — Financial API Route Inventory
+
+**Inspection date:** 2026-09-28  
+**Database:** disposable SQLite files under `prisma/phase3-*`  
+**Scope:** current route handlers, Prisma schema, authorization helpers and executed Phase 3 API regression probes. This is code inspection, not a claim that every route has a passing test.
+
+## Route findings
+
+`authorizeRequest` establishes the session and household context on the finance routes below; routes with ownership checks are household-scoped. `assertCanMutate` rejects read-only/viewer roles. P2 privacy changes were preserved. Routes marked “weak” remain release-relevant until regression coverage is added.
+
+| Route / method | Auth / ownership | Validation | Models changed / atomicity | Idempotency / test evidence / gaps |
+|---|---|---|---|---|
+| `/api/accounts` GET, POST | Auth; household scoped; mutation role required for POST | POST accepts weakly validated metadata and numeric balance | Account; single insert | No key. Phase 3 API setup exercised account create. P1: type, currency, initial balance and sensitive account-number response validation. |
+| `/api/accounts/[id]` GET, PUT, DELETE | Auth; household scoped; role gate for mutations | PUT validates target and balance sufficiently for guarded update; metadata validation incomplete | Account read/update/archive; one write (balance adjustment uses DB transaction with ledger) | Repeated close behavior not tested. P1 metadata/balance-integrity regression gaps. |
+| `/api/transactions` GET, POST | Auth; household; account/category ownership; mutation gate | Financial payload validation present | Transaction and account balances; Prisma transaction | Idempotency key supported; concurrent identical submissions yield one ledger row (201/200; replay 200). 18-case API run and persisted ledger oracle passed. |
+| `/api/transactions/[id]` DELETE | Auth; household and transaction ownership; mutation gate | ID/state checked | Reversal/account balance in transaction | Repeated void returns 200 without second balance delta. P1: original transaction type is overwritten as `VOIDED`, reducing audit traceability; reversal history/policy not fully modeled. |
+| `/api/income-sources` GET, POST | Auth; household; mutation role | POST validates basic source fields; account/category relation ownership needs stronger checks | IncomeSource; single write | No explicit idempotency. Creation exercised in route suite; duplicate-source semantics not covered. |
+| `/api/income-sources/[id]` PUT, DELETE | Auth; household ownership; mutation role | Weak raw amount and replacement relation validation | IncomeSource; one write/soft status | No idempotency; P1: cross-household/private account/category reassignment risk needs targeted hostile-ID tests and safe relation validation. |
+| `/api/income-sources/receipts` POST | Auth; household and source/account ownership; mutation gate | Positive amounts, outstanding cap, dates, key validated | IncomeOccurrence, Transaction, Account in one Prisma transaction | Idempotency key; partial receipt, replay, over-receipt rollback passed in API suite. |
+| `/api/income-occurrences` GET, POST | Auth; household/source ownership; mutation gate | Phase 3 now validates positive expected amount, ISO dates and period ordering | IncomeOccurrence; one write | No period uniqueness/key. Invalid amount/date/reversed period all 400 in regression suite. Duplicate period retries remain unsupported. |
+| `/api/recurring-bills` GET, POST | Auth; household; account/category ownership checked; mutation gate | Basic bill fields; date/amount bounds need broader tests | RecurringTransaction + initial RecurringBillOccurrence, transactionally | No scheduled future generation; initial occurrence created. Automatic generation/pause/resume/end-date tests NOT IMPLEMENTED. |
+| `/api/recurring-bills/payments` POST | Auth; household occurrence/account ownership; mutation gate | Positive partial amount and outstanding cap checked | Occurrence, Transaction, Account, optional Liability in transaction | Idempotency key; partial/duplicate payment API regression passed. Browser UI partial payment NOT RUN (native number field retained old value). |
+| `/api/budgets` GET, POST | Auth; household and category ownership; mutation gate | Month/year/category/positive limit validation | Budget upsert; single operation | Unique household/category/period upsert; no rollover rule. API budget setup passed; historical month UI filter not found/tested. |
+| `/api/employments` GET, POST | Auth; household/member ownership; mutation gate | Partial validation; frequency/date/salary edge cases unverified | EmploymentProfile + IncomeSource, transactionally | No idempotency. Happy path exercised in browser. Salary change effective-dating not implemented. |
+| `/api/employments/[id]` PUT, DELETE | Auth; household/employment ownership; mutation gate | PUT weakly validated | EmploymentProfile and linked source; update/soft end | No version history/idempotency. Effective-dated pay changes NOT IMPLEMENTED. |
+| `/api/payslips` GET, POST | Auth; household/employment ownership; mutation gate | Phase 3 validates month/year, nonnegative components, gross/net and prevents confirmed record mutation | PayslipRecord; create one record | Unique employment-period prevents duplicate. Invalid input 400; creation/replay/regeneration behavior tested via API. Browser generation passed. |
+| `/api/payslips/confirm` POST | Auth; payslip/employment/account household ownership; mutation gate | Phase 3 validates positive credit <= net, strict date, positive net, active account and field types | PayslipRecord, Transaction, Account, linked occurrence, atomically | State transition protects duplicate confirmation; replay 409. API and browser full credit passed; sensitive account number absent from response. |
+| `/api/goals` GET, POST; `/api/goals/[id]/contribute` POST | Auth; household/goal/account ownership; mutation gate | Contribution amount checked; goal create fields need more validation | Goal and linked ledger/account contribution in transaction | Contribution key/replay passed. Goal create exercised in API setup; independent contribution/account reconciliation only partially covered. |
+| `/api/investments` GET, POST | Auth; household; mutation gate | Create payload insufficiently validated; optional account relation is not used by POST | Investment; single write | No activity/posting endpoint, no account-ledger integration. Setup only; P1 if investment funding is represented as cash movement. |
+| `/api/assets` GET, POST | Auth; household; mutation gate | Create payload insufficiently validated | Asset; single write | No linked account/ledger update. Basic API setup only. |
+| `/api/liabilities` GET, POST | Auth; household; mutation gate | Create payload insufficiently validated | Liability; single write | No generic payment/reversal workflow; recurring bill payments can adjust linked liability. Basic setup only. |
+| `/api/forecasting` GET, POST | Auth; household scenario ownership; mutation gate for writes | Phase 2 ownership/privacy fix retained; input checks partial | ForecastScenario / milestone; operation scope depends on branch | Phase 2 security tests retained. Scenario/milestone reconciliation and hostile household matrix need broader coverage. |
+| `/api/categories` GET, POST | Auth; household/default categories; mutation role for POST | POST performs basic category validation; parent/type ownership and allowed type checks need broader hostile-input coverage | Category; single insert | No idempotency. POST mutation was not covered in Phase 3. |
+| `/api/auth/register` POST | Public by design; creates new user/household/membership | Registration validation and password hashing | User, Household, HouseholdMember, seed setup; transaction scope inspectable in route | Public registration was exercised in browser with synthetic account. Rate limiting/email verification not present. |
+| `/api/auth/login` POST, `/api/auth/logout` POST, `/api/auth/me` GET | Login/logout public/session lifecycle; `/me` requires valid session | Credential/input checks; responses should stay minimal | Session cookie; no finance data | Browser login/logout and protected navigation exercised. Header shell displays hardcoded unrelated identity despite synthetic session. |
+| `/api/household/invitations/accept` POST | Session required; invitation token and intended user checks | Partial token/state checks | Membership/invitation state | Mutation exists; no Phase 3 test for expired/replayed/cross-household invite. |
+| `/api/household/members` GET, PATCH/DELETE (per handler) | Session; household and role/admin checks | Membership transition checks | HouseholdMember / role | Viewer mutation restriction not fully exercised across all resource routes in Phase 3. |
+
+## Coverage status
+
+- 28 handler files were enumerated under `src/app/api`; route inventory above groups handlers by resource and method.
+- Baseline before source edits: `npm test` — 8 files, 39 tests passed.
+- Phase 3 added utility regression checks: 40 tests passed at last recorded run; rerun after all changes is required.
+- Targeted API regression: 18 assertions passed against `prisma/phase3-qa.db`, including two-household isolation, invalid financial inputs, partial/repeated receipts, rollback, transfer, expense void, bill payment replay, goal replay, concurrent duplicate transaction posting, and independent account/ledger arithmetic.
+- Not proven: all routes are secure, browser household switching, viewer denial on every route, automatic recurring generation, investment cash linkage, production route behavior.
+
+## Outstanding route risks
+
+P1: weak account create/update validation; income-source mutation relation checks; unvalidated employment edits; insufficient validation for investments/assets/liabilities/goals; no debt/investment journal model; transaction void obscures original type.  
+P2: recurring occurrence scheduler and income effective-date history are absent; no canonical server report endpoint/CSV export; historical budget-month selector is missing from the observed page.  
+Decision blocked: refunds/reversals and budget rollover require approved accounting/product rules.
