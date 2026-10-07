@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",
-    "start": "node scripts/start-standalone.mjs",
+    "start": "npx prisma migrate deploy && next start -p ${PORT:-10000} -H 0.0.0.0",
     "lint": "eslint src prisma",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --fileParallelism=false",
