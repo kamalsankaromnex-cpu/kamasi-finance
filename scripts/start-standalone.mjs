@@ -17,6 +17,9 @@ try {
   process.exit(1);
 }
 
+process.env.HOSTNAME = process.env.HOSTNAME || "0.0.0.0";
+process.env.PORT = process.env.PORT || "10000";
+
 const server = spawn(process.execPath, [path.join(process.cwd(), ".next", "standalone", "server.js")], {
   stdio: "inherit",
   env: process.env,
