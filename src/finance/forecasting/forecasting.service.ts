@@ -207,9 +207,12 @@ export class FinancialForecastingService {
   }
 
   /**
-   * Default Preset Scenarios Generator
+    * Default Preset Scenarios Generator
    */
   public static getPresetScenario(householdId: string, type: ScenarioType): ForecastScenarioConfig {
+    const currentYear = new Date().getFullYear();
+    const defaultEndYear = currentYear + 24;
+
     switch (type) {
       case "CONSERVATIVE":
         return {
@@ -217,8 +220,8 @@ export class FinancialForecastingService {
           name: "Conservative Scenario",
           type: "CONSERVATIVE",
           isDefault: false,
-          startYear: 2026,
-          endYear: 2050,
+          startYear: currentYear,
+          endYear: defaultEndYear,
           horizonMonths: 12,
           incomeGrowthRate: 0.0,
           expenseInflationRate: 8.0,
@@ -232,8 +235,8 @@ export class FinancialForecastingService {
           name: "Optimistic Scenario",
           type: "OPTIMISTIC",
           isDefault: false,
-          startYear: 2026,
-          endYear: 2050,
+          startYear: currentYear,
+          endYear: defaultEndYear,
           horizonMonths: 12,
           incomeGrowthRate: 8.0,
           expenseInflationRate: 4.0,
@@ -247,8 +250,8 @@ export class FinancialForecastingService {
           name: "Custom Scenario",
           type: "CUSTOM",
           isDefault: false,
-          startYear: 2026,
-          endYear: 2050,
+          startYear: currentYear,
+          endYear: defaultEndYear,
           horizonMonths: 12,
           incomeGrowthRate: 5.0,
           expenseInflationRate: 6.0,
@@ -263,8 +266,8 @@ export class FinancialForecastingService {
           name: "Baseline Scenario",
           type: "BASELINE",
           isDefault: true,
-          startYear: 2026,
-          endYear: 2050,
+          startYear: currentYear,
+          endYear: defaultEndYear,
           horizonMonths: 12,
           incomeGrowthRate: 5.0,
           expenseInflationRate: 6.0,

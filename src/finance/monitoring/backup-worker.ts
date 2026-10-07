@@ -59,7 +59,12 @@ export class BackupWorker {
 
     job.status = 'RUNNING';
 
-    const sourceDbPath = path.resolve(process.cwd(), 'prisma/dev.db');
+    let sourceDbPath = path.resolve(process.cwd(), 'prisma/dev.db');
+    const dbUrl = process.env.DATABASE_URL;
+    if (dbUrl && dbUrl.startsWith('file:')) {
+      const rawPath = dbUrl.slice('file:'.length);
+      sourceDbPath = path.isAbsolute(rawPath) ? rawPath : path.resolve(process.cwd(), 'prisma', rawPath);
+    }
     const scratchDir = path.resolve(process.cwd(), 'scratch');
     const backupDbPath = path.resolve(scratchDir, `backup_${jobId}.db`);
     const restoredDbPath = path.resolve(scratchDir, `restored_${jobId}.db`);

@@ -38,7 +38,7 @@ export async function POST(req: Request) {
           email: email.toLowerCase().trim(),
           name: name.trim(),
           passwordHash,
-          avatarUrl: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
+          avatarUrl: null,
         },
       });
 
