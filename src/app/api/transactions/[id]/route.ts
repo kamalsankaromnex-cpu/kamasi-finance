@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { authorizeRequest, assertCanMutate } from "@/lib/rbac";
+import { reverseLedgerTransaction } from "@/lib/ledger";
 
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -33,38 +34,12 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       return NextResponse.json({ error: "This transaction is linked to an income, bill, salary, or goal workflow and cannot be voided here" }, { status: 409 });
     }
 
-    // Atomic Database Transaction for deletion & balance reversal
+    // Atomic Database Transaction for deletion & balance reversal via reverseLedgerTransaction
     await prisma.$transaction(async (tx) => {
-      if (existingTxn.type === "INCOME") {
-        await tx.account.update({
-          where: { id: existingTxn.accountId },
-          data: { balance: { decrement: existingTxn.amount } },
-        });
-      } else if (existingTxn.type === "EXPENSE") {
-        await tx.account.update({
-          where: { id: existingTxn.accountId },
-          data: { balance: { increment: existingTxn.amount } },
-        });
-      } else if (existingTxn.type === "TRANSFER") {
-        await tx.account.update({
-          where: { id: existingTxn.accountId },
-          data: { balance: { increment: existingTxn.amount } },
-        });
-        if (existingTxn.transferAccountId) {
-          await tx.account.update({
-            where: { id: existingTxn.transferAccountId },
-            data: { balance: { decrement: existingTxn.amount } },
-          });
-        }
-      } else if (existingTxn.type === "ADJUSTMENT_INCREASE") {
-        await tx.account.update({ where: { id: existingTxn.accountId }, data: { balance: { decrement: existingTxn.amount } } });
-      } else if (existingTxn.type === "ADJUSTMENT_DECREASE") {
-        await tx.account.update({ where: { id: existingTxn.accountId }, data: { balance: { increment: existingTxn.amount } } });
-      }
-
-      await tx.transaction.update({
-        where: { id },
-        data: { isVoided: true, voidedAt: new Date(), voidedByUserId: session.id },
+      await reverseLedgerTransaction(tx, {
+        transactionId: id,
+        householdId: session.householdId,
+        voidedByUserId: session.id,
       });
     });
 

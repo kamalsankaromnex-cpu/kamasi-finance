@@ -28,7 +28,74 @@ export async function getSessionFromRequest(req: Request): Promise<SessionUser |
     select: { role: true },
   });
   if (!membership || !["OWNER", "MEMBER", "VIEWER"].includes(membership.role)) return null;
-  return { ...tokenSession, role: membership.role as SessionUser["role"] };
+
+  // Extract active profile preference if specified in cookie or header
+  let requestedProfileId: string | undefined = undefined;
+  if (cookieHeader) {
+    const profMatch = cookieHeader.split(";").find((c) => c.trim().startsWith("kamasi_active_profile="));
+    if (profMatch) {
+      requestedProfileId = profMatch.split("=")[1]?.trim();
+    }
+  }
+  const headerProf = req.headers.get("x-profile-id")?.trim();
+  if (headerProf) {
+    requestedProfileId = headerProf;
+  }
+
+  let activeProfileId: string | null = null;
+  let activeProfile: SessionUser["activeProfile"] = null;
+
+  if (requestedProfileId === "ALL") {
+    activeProfileId = "ALL";
+    activeProfile = null;
+  } else if (requestedProfileId) {
+    const profile = await prisma.familyProfile.findFirst({
+      where: { id: requestedProfileId, householdId: tokenSession.householdId, isActive: true },
+      select: { id: true, name: true, relationship: true, avatarUrl: true, color: true, isPrimary: true },
+    });
+    if (profile) {
+      activeProfileId = profile.id;
+      activeProfile = profile;
+    }
+  }
+
+  // If no valid active profile was resolved yet, pick or auto-create primary profile for the household
+  if (!activeProfileId) {
+    let primaryProfile = await prisma.familyProfile.findFirst({
+      where: { householdId: tokenSession.householdId, isPrimary: true, isActive: true },
+      select: { id: true, name: true, relationship: true, avatarUrl: true, color: true, isPrimary: true },
+    });
+
+    if (!primaryProfile) {
+      primaryProfile = await prisma.familyProfile.findFirst({
+        where: { householdId: tokenSession.householdId, isActive: true },
+        select: { id: true, name: true, relationship: true, avatarUrl: true, color: true, isPrimary: true },
+      });
+    }
+
+    if (!primaryProfile) {
+      primaryProfile = await prisma.familyProfile.create({
+        data: {
+          householdId: tokenSession.householdId,
+          name: tokenSession.name,
+          relationship: "SELF",
+          isPrimary: true,
+          isActive: true,
+        },
+        select: { id: true, name: true, relationship: true, avatarUrl: true, color: true, isPrimary: true },
+      });
+    }
+
+    activeProfileId = primaryProfile.id;
+    activeProfile = primaryProfile;
+  }
+
+  return {
+    ...tokenSession,
+    role: membership.role as SessionUser["role"],
+    activeProfileId,
+    activeProfile,
+  };
 }
 
 export async function authorizeRequest(req: Request): Promise<{ session: SessionUser } | { errorResponse: NextResponse }> {

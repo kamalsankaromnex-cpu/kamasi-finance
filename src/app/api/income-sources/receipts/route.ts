@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { authorizeRequest, assertCanMutate } from "@/lib/rbac";
 import { hideIdempotencyKey, isValidIdempotencyKey, parsePositiveMoney } from "@/lib/financial-validation";
+import { FinancialCommand } from "@/finance/financial-command";
 
 export async function POST(req: Request) {
   const idempotencyKey = req.headers.get("Idempotency-Key")?.trim() || "";
@@ -83,7 +84,18 @@ export async function POST(req: Request) {
 
     // Single Atomic Transaction updating Transaction Ledger, Account Balance (EXACTLY ONCE), and Occurrence Status
     const result = await prisma.$transaction(async (tx) => {
-      // 1. Create Immutable Ledger Transaction
+      // 1. Post Financial Command (posts double-entry journal & credits account balance ONCE)
+      await FinancialCommand.postIncome(tx, {
+        householdId: session.householdId,
+        accountId,
+        amount: decAmount,
+        description: description || `Actual Income Received: ${sourceName}`,
+        categoryId: categoryIdToUse,
+        date: receiptDate,
+        idempotencyKey,
+      });
+
+      // 2. Create Immutable Ledger Transaction
       const transaction = await tx.transaction.create({
         data: {
           householdId: session.householdId,
@@ -103,11 +115,7 @@ export async function POST(req: Request) {
         },
       });
 
-      // 2. Canonical Account Balance Increment (INCREMENTED ONCE AND ONLY ONCE)
-      const updatedAccount = await tx.account.update({
-        where: { id: accountId },
-        data: { balance: { increment: decAmount } },
-      });
+      const updatedAccount = await tx.account.findUniqueOrThrow({ where: { id: accountId } });
 
       // 3. Update IncomeOccurrence Totals & Status (if applicable)
       let updatedOccurrence = null;

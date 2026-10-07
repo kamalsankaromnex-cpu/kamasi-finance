@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { prisma } from "../prisma";
+import { FinancialCommand } from "@/finance/financial-command";
 import { Prisma } from "@prisma/client";
 
 describe("First-Time Registration & Financial Onboarding Wizard Test Suite", () => {
@@ -119,11 +120,21 @@ describe("First-Time Registration & Financial Onboarding Wizard Test Suite", () 
         userId: testUserId,
         name: "HDFC Opening Checking",
         type: "BANK",
-        balance: openingBal,
+        balance: new Prisma.Decimal(0.0),
       },
     });
 
-    expect(bankAcc.balance.toNumber()).toBe(75000.0);
+    await prisma.$transaction(async (tx) => {
+      await FinancialCommand.postOpeningBalance(tx, {
+        householdId: testHouseholdId,
+        accountId: bankAcc.id,
+        accountType: "BANK",
+        openingBalance: openingBal,
+      });
+    });
+
+    const updatedAcc = await prisma.account.findUniqueOrThrow({ where: { id: bankAcc.id } });
+    expect(updatedAcc.balance.toNumber()).toBe(75000.0);
 
     // Verify ZERO income transactions created
     const txnCount = await prisma.transaction.count({
@@ -142,19 +153,33 @@ describe("First-Time Registration & Financial Onboarding Wizard Test Suite", () 
         userId: testUserId,
         name: accName,
         type: "BANK",
-        balance: new Prisma.Decimal(50000.0),
+        balance: new Prisma.Decimal(0.0),
       },
     });
 
-    // Re-running onboarding step 2 with same account name updates balance idempotently
+    await prisma.$transaction(async (tx) => {
+      await FinancialCommand.postOpeningBalance(tx, {
+        householdId: testHouseholdId,
+        accountId: acc1.id,
+        accountType: "BANK",
+        openingBalance: new Prisma.Decimal(50000.0),
+      });
+    });
+
+    // Re-running onboarding step 2 with same account name updates balance via FinancialCommand.postAdjustment
     const existing = await prisma.account.findFirst({
       where: { householdId: testHouseholdId, name: accName },
     });
 
     if (existing) {
-      await prisma.account.update({
-        where: { id: existing.id },
-        data: { balance: new Prisma.Decimal(60000.0) },
+      await prisma.$transaction(async (tx) => {
+        const diff = new Prisma.Decimal(60000.0).sub(existing.balance);
+        await FinancialCommand.postAdjustment(tx, {
+          householdId: testHouseholdId,
+          accountId: existing.id,
+          amount: diff,
+          reason: "Onboarding balance adjustment",
+        });
       });
     }
 

@@ -11,6 +11,15 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing required registration fields" }, { status: 400 });
     }
 
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      return NextResponse.json({ error: "Please enter a valid email address" }, { status: 400 });
+    }
+
+    if (typeof password !== "string" || password.length < 8) {
+      return NextResponse.json({ error: "Password must be at least 8 characters long" }, { status: 400 });
+    }
+
     const existingUser = await prisma.user.findUnique({
       where: { email: email.toLowerCase().trim() },
     });
@@ -48,7 +57,17 @@ export async function POST(req: Request) {
         },
       });
 
-      return { user, household, role: membership.role };
+      const primaryProfile = await tx.familyProfile.create({
+        data: {
+          householdId: household.id,
+          name: user.name,
+          relationship: "SELF",
+          isPrimary: true,
+          isActive: true,
+        },
+      });
+
+      return { user, household, role: membership.role, primaryProfile };
     });
 
     const sessionPayload: SessionUser = {
@@ -57,9 +76,18 @@ export async function POST(req: Request) {
       name: result.user.name,
       householdId: result.household.id,
       role: result.role as any,
+      activeProfileId: result.primaryProfile.id,
+      activeProfile: {
+        id: result.primaryProfile.id,
+        name: result.primaryProfile.name,
+        relationship: result.primaryProfile.relationship,
+        isPrimary: true,
+      },
     };
 
     await setSessionCookie(sessionPayload);
+    const { setActiveProfileCookie } = await import("@/lib/auth");
+    await setActiveProfileCookie(result.primaryProfile.id);
 
     return NextResponse.json({ user: sessionPayload }, { status: 201 });
   } catch (error) {

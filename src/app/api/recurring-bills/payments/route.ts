@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { authorizeRequest, assertCanMutate } from "@/lib/rbac";
 import { hideIdempotencyKey, isValidIdempotencyKey, parsePositiveMoney } from "@/lib/financial-validation";
-import { debitAccountWithinLimit } from "@/lib/ledger";
+import { FinancialCommand } from "@/finance/financial-command";
 
 export async function POST(req: Request) {
   const idempotencyKey = req.headers.get("Idempotency-Key")?.trim() || "";
@@ -93,13 +93,34 @@ export async function POST(req: Request) {
 
       if (liabilityId && decPrincipal) {
         const changed = await tx.liability.updateMany({
-          where: { id: liabilityId, householdId: session.householdId, amount: { gte: decPrincipal } },
-          data: { amount: { decrement: decPrincipal } },
+          where: { id: liabilityId, householdId: session.householdId, outstandingAmount: { gte: decPrincipal } },
+          data: { outstandingAmount: { decrement: decPrincipal } },
         });
         if (changed.count !== 1) throw new Error("INVALID_LIABILITY_OR_PRINCIPAL");
+
+        const interestAmt = decAmount.sub(decPrincipal);
+        const liability = await tx.liability.findUniqueOrThrow({ where: { id: liabilityId } });
+        await FinancialCommand.postLoanPayment(tx, {
+          householdId: session.householdId,
+          payingAccountId: accountId,
+          liabilityName: liability.name,
+          principalAmount: decPrincipal,
+          interestAmount: interestAmt,
+          idempotencyKey,
+        });
+      } else {
+        await FinancialCommand.postExpense(tx, {
+          householdId: session.householdId,
+          accountId,
+          amount: decAmount,
+          description: `Bill Payment: ${occurrence.name}`,
+          categoryId: occurrence.recurringRule.categoryId,
+          date: payDate,
+          idempotencyKey,
+        });
       }
 
-      // 1. Create Canonical Expense Transaction
+      // Create Canonical Expense Transaction
       const transaction = await tx.transaction.create({
         data: {
           householdId: session.householdId,
@@ -118,8 +139,7 @@ export async function POST(req: Request) {
         },
       });
 
-      // 2. Canonical Single Balance Decrement (DECREMENTED ONCE AND ONLY ONCE)
-      const updatedAccount = await debitAccountWithinLimit(tx, { accountId, householdId: session.householdId, amount: decAmount });
+      const updatedAccount = await tx.account.findUniqueOrThrow({ where: { id: accountId } });
 
       const currentOccurrence = await tx.recurringBillOccurrence.findUniqueOrThrow({ where: { id: occurrence.id } });
       const status = currentOccurrence.outstandingAmount.equals(0) ? "PAID" : "PARTIALLY_PAID";

@@ -22,10 +22,18 @@ import {
   Filter,
   DollarSign,
   TrendingDown,
+  Upload,
+  Coins,
+  Home,
+  Briefcase,
+  Shield,
+  Gem,
+  Image as ImageIcon,
 } from "lucide-react";
 
 export default function AccountsPage() {
   const [accounts, setAccounts] = useState<any[]>([]);
+  const [institutions, setInstitutions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Filters & Tabs
@@ -37,6 +45,9 @@ export default function AccountsPage() {
   const [editingAccount, setEditingAccount] = useState<any>(null);
   const [closingAccount, setClosingAccount] = useState<any>(null);
 
+  // Uploading state
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
+
   // Form State
   const [form, setForm] = useState({
     name: "",
@@ -44,6 +55,10 @@ export default function AccountsPage() {
     balance: "",
     accountNumber: "",
     isShared: true,
+    financialInstitutionId: "",
+    logoMode: "AUTO", // AUTO, CUSTOM, ICON, INITIAL
+    customLogoUrl: "",
+    iconName: "bank",
     creditLimit: "",
     billingCycleDay: "",
     paymentDueDate: "",
@@ -51,23 +66,31 @@ export default function AccountsPage() {
     maturityDate: "",
   });
 
-  const fetchAccounts = async () => {
+  const fetchData = async () => {
     try {
       setLoading(true);
-      const res = await fetch("/api/accounts");
-      if (res.ok) {
-        const data = await res.json();
+      const [accRes, instRes] = await Promise.all([
+        fetch("/api/accounts"),
+        fetch("/api/institutions"),
+      ]);
+
+      if (accRes.ok) {
+        const data = await accRes.json();
         setAccounts(data);
       }
+      if (instRes.ok) {
+        const instData = await instRes.json();
+        setInstitutions(instData);
+      }
     } catch (err) {
-      console.error("Failed to fetch accounts:", err);
+      console.error("Failed to fetch accounts and institutions:", err);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchAccounts();
+    fetchData();
   }, []);
 
   const resetForm = () => {
@@ -77,6 +100,10 @@ export default function AccountsPage() {
       balance: "",
       accountNumber: "",
       isShared: true,
+      financialInstitutionId: "",
+      logoMode: "AUTO",
+      customLogoUrl: "",
+      iconName: "bank",
       creditLimit: "",
       billingCycleDay: "",
       paymentDueDate: "",
@@ -96,15 +123,51 @@ export default function AccountsPage() {
       name: acc.name || "",
       type: acc.type || "BANK",
       balance: acc.balance !== null && acc.balance !== undefined ? String(acc.balance) : "",
-      // The account API intentionally returns only a mask; do not resend it as account data.
       accountNumber: "",
       isShared: acc.isShared !== undefined ? acc.isShared : true,
+      financialInstitutionId: acc.financialInstitutionId || acc.financialInstitution?.id || "",
+      logoMode: acc.logoMode || "AUTO",
+      customLogoUrl: acc.customLogoUrl || "",
+      iconName: acc.iconName || "bank",
       creditLimit: acc.creditLimit !== null && acc.creditLimit !== undefined ? String(acc.creditLimit) : "",
       billingCycleDay: acc.billingCycleDay ? String(acc.billingCycleDay) : "",
       paymentDueDate: acc.paymentDueDate ? String(acc.paymentDueDate) : "",
       interestRate: acc.interestRate !== null && acc.interestRate !== undefined ? String(acc.interestRate) : "",
       maturityDate: acc.maturityDate ? new Date(acc.maturityDate).toISOString().split("T")[0] : "",
     });
+  };
+
+  const handleCustomLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setIsUploadingLogo(true);
+      const data = new FormData();
+      data.append("logo", file);
+
+      const res = await fetch("/api/uploads/logos", {
+        method: "POST",
+        body: data,
+      });
+
+      if (res.ok) {
+        const result = await res.json();
+        setForm((prev) => ({
+          ...prev,
+          customLogoUrl: result.url,
+          logoMode: "CUSTOM",
+        }));
+      } else {
+        const err = await res.json();
+        alert(err.error || "Failed to upload custom logo");
+      }
+    } catch (err) {
+      console.error("Upload error:", err);
+      alert("Network error uploading logo");
+    } finally {
+      setIsUploadingLogo(false);
+    }
   };
 
   const handleCreateAccount = async (e: React.FormEvent) => {
@@ -124,7 +187,7 @@ export default function AccountsPage() {
       if (res.ok) {
         setIsAddOpen(false);
         resetForm();
-        fetchAccounts();
+        fetchData();
       } else {
         const err = await res.json();
         alert(err.error || "Failed to create account");
@@ -153,7 +216,7 @@ export default function AccountsPage() {
       if (res.ok) {
         setEditingAccount(null);
         resetForm();
-        fetchAccounts();
+        fetchData();
       } else {
         const err = await res.json();
         alert(err.error || "Failed to update account");
@@ -173,7 +236,7 @@ export default function AccountsPage() {
 
       if (res.ok) {
         setClosingAccount(null);
-        fetchAccounts();
+        fetchData();
       } else {
         const err = await res.json();
         alert(err.error || "Failed to close account");
@@ -192,7 +255,7 @@ export default function AccountsPage() {
       });
 
       if (res.ok) {
-        fetchAccounts();
+        fetchData();
       } else {
         const err = await res.json();
         alert(err.error || "Failed to reopen account");
@@ -227,6 +290,115 @@ export default function AccountsPage() {
     if (typeFilter === "ALL") return true;
     return acc.type === typeFilter;
   });
+
+  // Initials generator helper
+  const getAccountInitials = (name: string, institutionName?: string) => {
+    const text = institutionName || name;
+    const parts = text.trim().split(/\s+/);
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[1][0]).toUpperCase();
+    }
+    return text.substring(0, 2).toUpperCase() || "AC";
+  };
+
+  // Icon mapping helper
+  const renderIconByName = (iconName?: string, className = "h-5 w-5") => {
+    switch (iconName) {
+      case "credit-card":
+        return <CreditCard className={className} />;
+      case "building":
+        return <Building className={className} />;
+      case "building2":
+        return <Building2 className={className} />;
+      case "coins":
+        return <Coins className={className} />;
+      case "home":
+        return <Home className={className} />;
+      case "briefcase":
+        return <Briefcase className={className} />;
+      case "shield":
+        return <Shield className={className} />;
+      case "gem":
+        return <Gem className={className} />;
+      case "wallet":
+      case "bank":
+      default:
+        return <Wallet className={className} />;
+    }
+  };
+
+  // Logo rendering with Fallback Chain
+  const renderAccountLogo = (acc: any, sizeClass = "h-9 w-9") => {
+    const mode = acc.logoMode || "AUTO";
+    const selectedInst = institutions.find((i) => i.id === (acc.financialInstitutionId || acc.financialInstitution?.id));
+    const instLogoUrl = selectedInst?.logoUrl || acc.financialInstitution?.logoUrl;
+    const initials = getAccountInitials(acc.name, selectedInst?.name || acc.financialInstitution?.name);
+
+    if (mode === "CUSTOM" && acc.customLogoUrl) {
+      return (
+        <img
+          src={acc.customLogoUrl}
+          alt={acc.name}
+          className={`${sizeClass} rounded-xl object-contain border bg-background p-1`}
+          onError={(e) => {
+            // Graceful fallback to initial if image fails to load
+            (e.target as HTMLElement).style.display = "none";
+          }}
+        />
+      );
+    }
+
+    if (mode === "AUTO" && instLogoUrl) {
+      return (
+        <img
+          src={instLogoUrl}
+          alt={selectedInst?.name || acc.name}
+          className={`${sizeClass} rounded-xl object-contain border bg-background p-1`}
+          onError={(e) => {
+            // Graceful fallback to initial
+            (e.target as HTMLElement).style.display = "none";
+          }}
+        />
+      );
+    }
+
+    if (mode === "ICON" && acc.iconName) {
+      return (
+        <div className={`flex ${sizeClass} items-center justify-center rounded-xl bg-primary/10 text-primary border`}>
+          {renderIconByName(acc.iconName, "h-5 w-5")}
+        </div>
+      );
+    }
+
+    if (mode === "INITIAL") {
+      return (
+        <div className={`flex ${sizeClass} items-center justify-center rounded-xl bg-primary/15 font-bold text-primary border text-xs`}>
+          {initials}
+        </div>
+      );
+    }
+
+    // Default Fallback: System Type Icon
+    const isBank = acc.type === "BANK";
+    const isCredit = acc.type === "CREDIT";
+    const isLoan = acc.type === "LOAN";
+
+    return (
+      <div
+        className={`flex ${sizeClass} items-center justify-center rounded-xl ${
+          isBank
+            ? "bg-emerald-500/10 text-emerald-600"
+            : isCredit
+            ? "bg-amber-500/10 text-amber-600"
+            : isLoan
+            ? "bg-rose-500/10 text-rose-600"
+            : "bg-indigo-500/10 text-indigo-600"
+        }`}
+      >
+        {isBank ? <Wallet className="h-5 w-5" /> : isCredit ? <CreditCard className="h-5 w-5" /> : isLoan ? <Building2 className="h-5 w-5" /> : <Building className="h-5 w-5" />}
+      </div>
+    );
+  };
 
   return (
     <AppLayout>
@@ -362,22 +534,25 @@ export default function AccountsPage() {
               const numBal = Number(acc.balance || 0);
               const isCredit = acc.type === "CREDIT";
               const isLoan = acc.type === "LOAN";
-              const isBank = acc.type === "BANK";
               const isInvestment = acc.type === "INVESTMENT";
+              const selectedInst = institutions.find((i) => i.id === (acc.financialInstitutionId || acc.financialInstitution?.id));
 
               return (
                 <Card key={acc.id} className={`relative overflow-hidden transition-all hover:shadow-md ${acc.isArchived ? "opacity-75 bg-muted/30" : ""}`}>
-                  <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
-                    <div className="space-y-1">
+                  <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3 gap-2">
+                    <div className="space-y-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <CardTitle className="text-base font-bold text-foreground">{acc.name}</CardTitle>
+                        <CardTitle className="text-base font-bold text-foreground truncate">{acc.name}</CardTitle>
                         {acc.isArchived && (
-                          <span className="rounded-full bg-rose-500/10 px-2 py-0.5 text-[10px] font-bold text-rose-600 uppercase">
+                          <span className="rounded-full bg-rose-500/10 px-2 py-0.5 text-[10px] font-bold text-rose-600 uppercase shrink-0">
                             CLOSED
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
+                      {selectedInst && (
+                        <p className="text-[11px] font-semibold text-primary">{selectedInst.name}</p>
+                      )}
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono flex-wrap">
                         <span>{acc.accountNumber ? `•••• ${acc.accountNumber.slice(-4)}` : acc.type}</span>
                         <span>•</span>
                         <span className="flex items-center gap-1">
@@ -394,25 +569,39 @@ export default function AccountsPage() {
                       </div>
                     </div>
 
-                    <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${
-                      isBank
-                        ? "bg-emerald-500/10 text-emerald-600"
-                        : isCredit
-                        ? "bg-amber-500/10 text-amber-600"
-                        : isLoan
-                        ? "bg-rose-500/10 text-rose-600"
-                        : "bg-indigo-500/10 text-indigo-600"
-                    }`}>
-                      {isBank ? <Wallet className="h-5 w-5" /> : isCredit ? <CreditCard className="h-5 w-5" /> : isLoan ? <Building2 className="h-5 w-5" /> : <Building className="h-5 w-5" />}
+                    {/* Account Branding Logo */}
+                    <div className="shrink-0">
+                      {renderAccountLogo(acc)}
                     </div>
                   </CardHeader>
 
                   <CardContent className="space-y-4">
-                    <div>
-                      <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Current Balance</p>
-                      <div className={`text-2xl font-extrabold ${numBal < 0 || isCredit || isLoan ? "text-rose-600" : "text-emerald-600"}`}>
-                        {formatINR(numBal)}
+                    <div className="flex items-end justify-between gap-2">
+                      <div>
+                        <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Current Balance</p>
+                        <div className={`text-2xl font-extrabold ${numBal < 0 || isCredit || isLoan ? "text-rose-600" : "text-emerald-600"}`}>
+                          {formatINR(numBal)}
+                        </div>
                       </div>
+
+                      {/* Household Member Profile Avatars */}
+                      {acc.sharedMembers && acc.sharedMembers.length > 0 && (
+                        <div className="flex items-center -space-x-2 overflow-hidden py-1" title={acc.isShared ? "Authorized Household Members" : "Account Holder"}>
+                          {acc.sharedMembers.map((m: any) => (
+                            <div
+                              key={m.id}
+                              title={m.name}
+                              className="inline-block h-7 w-7 rounded-full ring-2 ring-background bg-primary/20 flex items-center justify-center font-bold text-[10px] text-primary"
+                            >
+                              {m.avatarUrl ? (
+                                <img src={m.avatarUrl} alt={m.name} className="h-full w-full rounded-full object-cover" />
+                              ) : (
+                                m.name?.substring(0, 2).toUpperCase() || "M"
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
 
                     {/* Metadata details */}
@@ -435,12 +624,10 @@ export default function AccountsPage() {
                       )}
 
                       {isLoan && (
-                        <>
-                          <div className="flex justify-between">
-                            <span className="text-muted-foreground">Interest Rate:</span>
-                            <span className="font-semibold">{acc.interestRate ? `${acc.interestRate}% p.a.` : "N/A"}</span>
-                          </div>
-                        </>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Interest Rate:</span>
+                          <span className="font-semibold">{acc.interestRate ? `${acc.interestRate}% p.a.` : "N/A"}</span>
+                        </div>
                       )}
 
                       {isInvestment && (
@@ -504,8 +691,117 @@ export default function AccountsPage() {
             <div className="w-full max-w-lg rounded-xl bg-background p-6 shadow-xl space-y-4 overflow-y-auto max-h-[90vh]">
               <h2 className="text-lg font-bold">Add Financial Account</h2>
               <form onSubmit={handleCreateAccount} className="space-y-4">
+                {/* Account Branding Section */}
+                <div className="rounded-lg border p-3 bg-muted/20 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Account Identity & Branding</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-muted-foreground">Preview:</span>
+                      {renderAccountLogo({
+                        name: form.name || "Preview",
+                        logoMode: form.logoMode,
+                        customLogoUrl: form.customLogoUrl,
+                        iconName: form.iconName,
+                        financialInstitutionId: form.financialInstitutionId,
+                        type: form.type,
+                      }, "h-7 w-7")}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-medium block mb-1">Financial Institution</label>
+                    <select
+                      value={form.financialInstitutionId}
+                      onChange={(e) => {
+                        const instId = e.target.value;
+                        setForm((prev) => ({
+                          ...prev,
+                          financialInstitutionId: instId,
+                          logoMode: instId ? "AUTO" : prev.logoMode,
+                        }));
+                      }}
+                      className="w-full rounded-md border p-2 text-xs bg-background"
+                    >
+                      <option value="">Select Financial Institution (Optional)</option>
+                      {institutions.map((inst) => (
+                        <option key={inst.id} value={inst.id}>
+                          {inst.name} ({inst.shortCode || "Bank"})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-medium block mb-1">Logo Source Mode</label>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {[
+                        { mode: "AUTO", label: "Institution" },
+                        { mode: "CUSTOM", label: "Custom" },
+                        { mode: "ICON", label: "System Icon" },
+                        { mode: "INITIAL", label: "Initials" },
+                      ].map((m) => (
+                        <button
+                          key={m.mode}
+                          type="button"
+                          onClick={() => setForm({ ...form, logoMode: m.mode })}
+                          className={`rounded-md py-1 px-2 text-xs font-semibold border transition-all ${
+                            form.logoMode === m.mode
+                              ? "bg-primary text-primary-foreground border-primary"
+                              : "bg-background text-muted-foreground hover:bg-muted"
+                          }`}
+                        >
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {form.logoMode === "CUSTOM" && (
+                    <div className="space-y-2 pt-1">
+                      <label className="text-xs font-medium block">Upload Custom Logo (PNG, JPG, WEBP - Max 2MB)</label>
+                      <div className="flex items-center gap-3">
+                        <label className="inline-flex items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-semibold cursor-pointer hover:bg-muted">
+                          <Upload className="h-3.5 w-3.5" />
+                          {isUploadingLogo ? "Uploading..." : "Choose Image File"}
+                          <input type="file" accept="image/png,image/jpeg,image/webp" onChange={handleCustomLogoUpload} className="hidden" />
+                        </label>
+                        {form.customLogoUrl && <span className="text-xs text-emerald-600 font-semibold">✓ Custom logo attached</span>}
+                      </div>
+                    </div>
+                  )}
+
+                  {form.logoMode === "ICON" && (
+                    <div className="space-y-1.5 pt-1">
+                      <label className="text-xs font-medium block">Select Icon</label>
+                      <div className="flex flex-wrap gap-2">
+                        {[
+                          { name: "bank", icon: <Wallet className="h-4 w-4" /> },
+                          { name: "credit-card", icon: <CreditCard className="h-4 w-4" /> },
+                          { name: "building", icon: <Building className="h-4 w-4" /> },
+                          { name: "coins", icon: <Coins className="h-4 w-4" /> },
+                          { name: "home", icon: <Home className="h-4 w-4" /> },
+                          { name: "briefcase", icon: <Briefcase className="h-4 w-4" /> },
+                          { name: "shield", icon: <Shield className="h-4 w-4" /> },
+                          { name: "gem", icon: <Gem className="h-4 w-4" /> },
+                        ].map((ic) => (
+                          <button
+                            key={ic.name}
+                            type="button"
+                            onClick={() => setForm({ ...form, iconName: ic.name })}
+                            className={`p-2 rounded-lg border transition-all ${
+                              form.iconName === ic.name ? "bg-primary text-primary-foreground border-primary" : "bg-background text-muted-foreground hover:bg-muted"
+                            }`}
+                          >
+                            {ic.icon}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div>
-                  <label className="text-xs font-medium">Account Name</label>
+                  <label className="text-xs font-medium">Account Name *</label>
                   <input
                     type="text"
                     required
@@ -569,81 +865,6 @@ export default function AccountsPage() {
                   </div>
                 </div>
 
-                {form.type === "CREDIT" && (
-                  <div className="grid grid-cols-3 gap-3 border-t pt-3">
-                    <div>
-                      <label className="text-xs font-medium">Credit Limit (₹)</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        placeholder="150000"
-                        value={form.creditLimit}
-                        onChange={(e) => setForm({ ...form, creditLimit: e.target.value })}
-                        className="mt-1 w-full rounded-md border p-2 text-sm bg-background"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium">Cycle Day</label>
-                      <input
-                        type="number"
-                        placeholder="15"
-                        value={form.billingCycleDay}
-                        onChange={(e) => setForm({ ...form, billingCycleDay: e.target.value })}
-                        className="mt-1 w-full rounded-md border p-2 text-sm bg-background"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium">Due Date</label>
-                      <input
-                        type="number"
-                        placeholder="5"
-                        value={form.paymentDueDate}
-                        onChange={(e) => setForm({ ...form, paymentDueDate: e.target.value })}
-                        className="mt-1 w-full rounded-md border p-2 text-sm bg-background"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {form.type === "LOAN" && (
-                  <div className="border-t pt-3">
-                    <label className="text-xs font-medium">Interest Rate (% p.a.)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      placeholder="8.5"
-                      value={form.interestRate}
-                      onChange={(e) => setForm({ ...form, interestRate: e.target.value })}
-                      className="mt-1 w-full rounded-md border p-2 text-sm bg-background"
-                    />
-                  </div>
-                )}
-
-                {form.type === "INVESTMENT" && (
-                  <div className="grid grid-cols-2 gap-3 border-t pt-3">
-                    <div>
-                      <label className="text-xs font-medium">Interest / Return Rate (%)</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        placeholder="7.1"
-                        value={form.interestRate}
-                        onChange={(e) => setForm({ ...form, interestRate: e.target.value })}
-                        className="mt-1 w-full rounded-md border p-2 text-sm bg-background"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium">Maturity Date</label>
-                      <input
-                        type="date"
-                        value={form.maturityDate}
-                        onChange={(e) => setForm({ ...form, maturityDate: e.target.value })}
-                        className="mt-1 w-full rounded-md border p-2 text-sm bg-background"
-                      />
-                    </div>
-                  </div>
-                )}
-
                 <div className="flex justify-end gap-3 pt-2">
                   <button
                     type="button"
@@ -670,8 +891,117 @@ export default function AccountsPage() {
             <div className="w-full max-w-lg rounded-xl bg-background p-6 shadow-xl space-y-4 overflow-y-auto max-h-[90vh]">
               <h2 className="text-lg font-bold">Edit Account Details</h2>
               <form onSubmit={handleUpdateAccount} className="space-y-4">
+                {/* Account Branding Section */}
+                <div className="rounded-lg border p-3 bg-muted/20 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Account Identity & Branding</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-muted-foreground">Preview:</span>
+                      {renderAccountLogo({
+                        name: form.name || "Preview",
+                        logoMode: form.logoMode,
+                        customLogoUrl: form.customLogoUrl,
+                        iconName: form.iconName,
+                        financialInstitutionId: form.financialInstitutionId,
+                        type: form.type,
+                      }, "h-7 w-7")}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-medium block mb-1">Financial Institution</label>
+                    <select
+                      value={form.financialInstitutionId}
+                      onChange={(e) => {
+                        const instId = e.target.value;
+                        setForm((prev) => ({
+                          ...prev,
+                          financialInstitutionId: instId,
+                          logoMode: instId ? "AUTO" : prev.logoMode,
+                        }));
+                      }}
+                      className="w-full rounded-md border p-2 text-xs bg-background"
+                    >
+                      <option value="">Select Financial Institution (Optional)</option>
+                      {institutions.map((inst) => (
+                        <option key={inst.id} value={inst.id}>
+                          {inst.name} ({inst.shortCode || "Bank"})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-medium block mb-1">Logo Source Mode</label>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {[
+                        { mode: "AUTO", label: "Institution" },
+                        { mode: "CUSTOM", label: "Custom" },
+                        { mode: "ICON", label: "System Icon" },
+                        { mode: "INITIAL", label: "Initials" },
+                      ].map((m) => (
+                        <button
+                          key={m.mode}
+                          type="button"
+                          onClick={() => setForm({ ...form, logoMode: m.mode })}
+                          className={`rounded-md py-1 px-2 text-xs font-semibold border transition-all ${
+                            form.logoMode === m.mode
+                              ? "bg-primary text-primary-foreground border-primary"
+                              : "bg-background text-muted-foreground hover:bg-muted"
+                          }`}
+                        >
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {form.logoMode === "CUSTOM" && (
+                    <div className="space-y-2 pt-1">
+                      <label className="text-xs font-medium block">Upload Custom Logo (PNG, JPG, WEBP - Max 2MB)</label>
+                      <div className="flex items-center gap-3">
+                        <label className="inline-flex items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-semibold cursor-pointer hover:bg-muted">
+                          <Upload className="h-3.5 w-3.5" />
+                          {isUploadingLogo ? "Uploading..." : "Choose Image File"}
+                          <input type="file" accept="image/png,image/jpeg,image/webp" onChange={handleCustomLogoUpload} className="hidden" />
+                        </label>
+                        {form.customLogoUrl && <span className="text-xs text-emerald-600 font-semibold">✓ Custom logo attached</span>}
+                      </div>
+                    </div>
+                  )}
+
+                  {form.logoMode === "ICON" && (
+                    <div className="space-y-1.5 pt-1">
+                      <label className="text-xs font-medium block">Select Icon</label>
+                      <div className="flex flex-wrap gap-2">
+                        {[
+                          { name: "bank", icon: <Wallet className="h-4 w-4" /> },
+                          { name: "credit-card", icon: <CreditCard className="h-4 w-4" /> },
+                          { name: "building", icon: <Building className="h-4 w-4" /> },
+                          { name: "coins", icon: <Coins className="h-4 w-4" /> },
+                          { name: "home", icon: <Home className="h-4 w-4" /> },
+                          { name: "briefcase", icon: <Briefcase className="h-4 w-4" /> },
+                          { name: "shield", icon: <Shield className="h-4 w-4" /> },
+                          { name: "gem", icon: <Gem className="h-4 w-4" /> },
+                        ].map((ic) => (
+                          <button
+                            key={ic.name}
+                            type="button"
+                            onClick={() => setForm({ ...form, iconName: ic.name })}
+                            className={`p-2 rounded-lg border transition-all ${
+                              form.iconName === ic.name ? "bg-primary text-primary-foreground border-primary" : "bg-background text-muted-foreground hover:bg-muted"
+                            }`}
+                          >
+                            {ic.icon}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div>
-                  <label className="text-xs font-medium">Account Name</label>
+                  <label className="text-xs font-medium">Account Name *</label>
                   <input
                     type="text"
                     required
@@ -732,39 +1062,6 @@ export default function AccountsPage() {
                     </select>
                   </div>
                 </div>
-
-                {form.type === "CREDIT" && (
-                  <div className="grid grid-cols-3 gap-3 border-t pt-3">
-                    <div>
-                      <label className="text-xs font-medium">Credit Limit (₹)</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={form.creditLimit}
-                        onChange={(e) => setForm({ ...form, creditLimit: e.target.value })}
-                        className="mt-1 w-full rounded-md border p-2 text-sm bg-background"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium">Cycle Day</label>
-                      <input
-                        type="number"
-                        value={form.billingCycleDay}
-                        onChange={(e) => setForm({ ...form, billingCycleDay: e.target.value })}
-                        className="mt-1 w-full rounded-md border p-2 text-sm bg-background"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium">Due Date</label>
-                      <input
-                        type="number"
-                        value={form.paymentDueDate}
-                        onChange={(e) => setForm({ ...form, paymentDueDate: e.target.value })}
-                        className="mt-1 w-full rounded-md border p-2 text-sm bg-background"
-                      />
-                    </div>
-                  </div>
-                )}
 
                 <div className="flex justify-end gap-3 pt-2">
                   <button

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { authorizeRequest, assertCanMutate } from "@/lib/rbac";
 import { parseNonNegativeMoney, parsePositiveMoney } from "@/lib/financial-validation";
+import { FinancialCommand } from "@/finance/financial-command";
 import { Prisma } from "@prisma/client";
 
 export async function GET(req: Request) {
@@ -167,6 +168,7 @@ export async function POST(req: Request) {
             if (!acc.name || !acc.type) continue;
             const bal = parseNonNegativeMoney(acc.balance) ?? new Prisma.Decimal(0);
             const limit = acc.creditLimit ? parseNonNegativeMoney(acc.creditLimit) : null;
+            const openingBal = acc.type === "CREDIT" ? bal.negated() : bal;
 
             // Idempotent upsert by household & name
             const existing = await tx.account.findFirst({
@@ -174,22 +176,40 @@ export async function POST(req: Request) {
             });
 
             if (existing) {
+              if (!openingBal.equals(existing.balance)) {
+                const diff = openingBal.sub(existing.balance);
+                await FinancialCommand.postAdjustment(tx, {
+                  householdId: session.householdId,
+                  accountId: existing.id,
+                  amount: diff,
+                  reason: "Onboarding balance adjustment",
+                });
+              }
               await tx.account.update({
                 where: { id: existing.id },
-                data: { balance: bal, creditLimit: limit },
+                data: { creditLimit: limit },
               });
             } else {
-              await tx.account.create({
+              const created = await tx.account.create({
                 data: {
                   householdId: session.householdId,
                   userId: session.id,
                   name: acc.name.trim(),
                   type: acc.type,
-                  balance: acc.type === "CREDIT" || acc.type === "LOAN" ? bal.negated() : bal,
+                  balance: new Prisma.Decimal(0),
                   creditLimit: limit,
                   isShared: acc.isShared !== false,
                 },
               });
+
+              if (!openingBal.isZero()) {
+                await FinancialCommand.postOpeningBalance(tx, {
+                  householdId: session.householdId,
+                  accountId: created.id,
+                  accountType: created.type,
+                  openingBalance: openingBal,
+                });
+              }
             }
           }
 
@@ -262,26 +282,33 @@ export async function POST(req: Request) {
             const amt = parseNonNegativeMoney(b.amount);
             if (!amt) continue;
 
-            await tx.budget.upsert({
+            const existing = await tx.budget.findFirst({
               where: {
-                householdId_categoryId_month_year: {
-                  householdId: session.householdId,
-                  categoryId: b.categoryId,
-                  month: currentMonth,
-                  year: currentYear,
-                },
-              },
-              create: {
                 householdId: session.householdId,
                 categoryId: b.categoryId,
                 month: currentMonth,
                 year: currentYear,
-                amount: amt,
-              },
-              update: {
-                amount: amt,
               },
             });
+
+            if (existing) {
+              await tx.budget.update({
+                where: { id: existing.id },
+                data: {
+                  amount: amt,
+                },
+              });
+            } else {
+              await tx.budget.create({
+                data: {
+                  householdId: session.householdId,
+                  categoryId: b.categoryId,
+                  month: currentMonth,
+                  year: currentYear,
+                  amount: amt,
+                },
+              });
+            }
           }
 
           await tx.user.update({

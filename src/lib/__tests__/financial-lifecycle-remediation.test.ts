@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { prisma } from "../prisma";
+import { FinancialCommand } from "@/finance/financial-command";
+import { TransactionDomainService } from "@/modules/transactions/transaction.service";
 import { Prisma } from "@prisma/client";
-import { getNextDueDate, generatePendingOccurrences, normalizeToUtcMidnight } from "../recurrence";
+import { normalizeToUtcMidnight } from "../recurrence";
 
 describe("Financial Lifecycle & Referential Integrity Regression Test Suite", () => {
   let testUserId: string;
@@ -35,10 +37,19 @@ describe("Financial Lifecycle & Referential Integrity Regression Test Suite", ()
         householdId: hhAlpha.id,
         name: "Alpha HDFC Checking",
         type: "BANK",
-        balance: new Prisma.Decimal(100000.0),
+        balance: new Prisma.Decimal(0.0),
       },
     });
     bankAccountIdAlpha = bankAlpha.id;
+
+    await prisma.$transaction(async (tx) => {
+      await FinancialCommand.postOpeningBalance(tx, {
+        householdId: householdIdAlpha,
+        accountId: bankAccountIdAlpha,
+        accountType: "BANK",
+        openingBalance: new Prisma.Decimal(100000.0),
+      });
+    });
 
     const catAlpha = await prisma.category.create({
       data: { householdId: hhAlpha.id, name: "Alpha Groceries", type: "EXPENSE" },
@@ -225,51 +236,42 @@ describe("Financial Lifecycle & Referential Integrity Regression Test Suite", ()
   });
 
   it("FINANCIAL LEDGER RECONCILIATION ORACLE: Verifies net worth, closing balances, and net spent", async () => {
-    const openingBalance = 100000.0; // ₹1,00,000
-
     // 1. Posted Income +₹30,000
     const incomeAmount = new Prisma.Decimal(30000.0);
     await prisma.$transaction(async (tx) => {
-      await tx.transaction.create({
-        data: {
-          householdId: householdIdAlpha,
-          accountId: bankAccountIdAlpha,
-          userId: testUserId,
-          amount: incomeAmount,
-          type: "INCOME",
-          description: "Freelance Income",
-        },
-      });
-      await tx.account.update({
-        where: { id: bankAccountIdAlpha },
-        data: { balance: { increment: incomeAmount } },
+      await TransactionDomainService.createIncome(tx, {
+        householdId: householdIdAlpha,
+        userId: testUserId,
+        accountId: bankAccountIdAlpha,
+        amount: incomeAmount,
+        description: "Freelance Income",
       });
     });
 
     // 2. Gross Expense -₹10,000
     const expenseAmount = new Prisma.Decimal(10000.0);
     const expenseTxn = await prisma.$transaction(async (tx) => {
-      const exp = await tx.transaction.create({
-        data: {
-          householdId: householdIdAlpha,
-          accountId: bankAccountIdAlpha,
-          categoryId: categoryIdAlpha,
-          userId: testUserId,
-          amount: expenseAmount,
-          type: "EXPENSE",
-          description: "Equipment Purchase",
-        },
+      return TransactionDomainService.createExpense(tx, {
+        householdId: householdIdAlpha,
+        userId: testUserId,
+        accountId: bankAccountIdAlpha,
+        categoryId: categoryIdAlpha,
+        amount: expenseAmount,
+        description: "Equipment Purchase",
       });
-      await tx.account.update({
-        where: { id: bankAccountIdAlpha },
-        data: { balance: { decrement: expenseAmount } },
-      });
-      return exp;
     });
 
     // 3. Linked Refund +₹3,000
     const refundAmount = new Prisma.Decimal(3000.0);
     await prisma.$transaction(async (tx) => {
+      await FinancialCommand.postRefund(tx, {
+        householdId: householdIdAlpha,
+        accountId: bankAccountIdAlpha,
+        amount: refundAmount,
+        description: "Equipment Refund",
+        refundOfId: expenseTxn.id,
+      });
+
       await tx.transaction.create({
         data: {
           householdId: householdIdAlpha,
@@ -277,18 +279,15 @@ describe("Financial Lifecycle & Referential Integrity Regression Test Suite", ()
           categoryId: categoryIdAlpha,
           userId: testUserId,
           amount: refundAmount,
-          type: "EXPENSE",
+          type: "INCOME",
           refundOfId: expenseTxn.id,
           description: "Equipment Refund",
         },
       });
+
       await tx.transaction.update({
         where: { id: expenseTxn.id },
         data: { refundedAmount: { increment: refundAmount } },
-      });
-      await tx.account.update({
-        where: { id: bankAccountIdAlpha },
-        data: { balance: { increment: refundAmount } },
       });
     });
 

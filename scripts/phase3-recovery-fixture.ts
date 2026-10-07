@@ -67,10 +67,10 @@ try {
       data: { householdId: household.id, name: "Synthetic emergency fund", targetAmount: amount("500"), currentAmount: amount("30"), targetDate: new Date("2027-12-31T00:00:00.000Z") },
     });
     await tx.investment.create({
-      data: { householdId: household.id, accountId: account.id, name: "Synthetic holding", symbol: "SYN", type: "OTHER", quantity: amount("2"), purchasePrice: amount("50"), currentPrice: amount("75") },
+      data: { householdId: household.id, investmentAccountId: account.id, name: "Synthetic holding", symbol: "SYN", category: "OTHER", type: "OTHER", status: "ACTIVE", totalQuantity: amount("2"), totalCostBasis: amount("100"), weightedAverageCost: amount("50"), currentPricePerUnit: amount("75"), currentMarketValue: amount("150") },
     });
     await tx.asset.create({ data: { householdId: household.id, name: "Synthetic asset", type: "OTHER", value: amount("10000") } });
-    await tx.liability.create({ data: { householdId: household.id, name: "Synthetic liability", type: "OTHER", amount: amount("2000") } });
+    await tx.liability.create({ data: { householdId: household.id, name: "Synthetic liability", type: "OTHER", category: "OTHER", status: "ACTIVE", principalAmount: amount("2000"), outstandingAmount: amount("2000") } });
     const scenario = await tx.forecastScenario.create({ data: { householdId: household.id, name: "Synthetic recovery scenario", isDefault: true } });
     await tx.forecastMilestone.create({ data: { scenarioId: scenario.id, name: "Synthetic recovery milestone", targetYear: 2030, estimatedCost: amount("5000"), type: "EXPENSE" } });
     const ledgerDate = new Date("2026-09-10T00:00:00.000Z");

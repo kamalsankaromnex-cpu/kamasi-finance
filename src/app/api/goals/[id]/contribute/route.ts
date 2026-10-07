@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { authorizeRequest, assertCanMutate } from "@/lib/rbac";
 import { hideIdempotencyKey, isValidIdempotencyKey, parsePositiveMoney } from "@/lib/financial-validation";
+import { GoalDomainService } from "@/modules/goals/goal.service";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const idempotencyKey = req.headers.get("Idempotency-Key")?.trim() || "";
@@ -32,6 +33,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (!goal) {
       return NextResponse.json({ error: "Goal not found or access denied" }, { status: 404 });
     }
+    if (goal.status !== "ACTIVE") {
+      return NextResponse.json({ error: "Goal is not active and cannot receive contributions" }, { status: 400 });
+    }
 
     // IDOR Protection: verify account belongs to session household
     const account = await prisma.account.findFirst({
@@ -49,33 +53,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return matches ? NextResponse.json({ goal, transaction: hideIdempotencyKey(prior) }, { status: 200 }) : NextResponse.json({ error: "Idempotency key has already been used" }, { status: 409 });
     }
 
-    // Atomic Database Transaction
+    // Atomic Database Transaction via GoalDomainService
     const result = await prisma.$transaction(async (tx) => {
-      const updatedGoal = await tx.goal.update({
-        where: { id },
-        data: { currentAmount: { increment: decAmount } },
+      const res = await GoalDomainService.depositToGoal(tx, {
+        goalId: id,
+        householdId: session.householdId,
+        userId: session.id,
+        accountId,
+        amount: decAmount,
+        idempotencyKey,
       });
-
-      await tx.account.update({
-        where: { id: accountId },
-        data: { balance: { decrement: decAmount } },
-      });
-
-      await tx.transaction.create({
-        data: {
-          householdId: session.householdId,
-          accountId,
-          userId: session.id,
-          idempotencyKey,
-          amount: decAmount,
-          type: "EXPENSE",
-          description: `Goal Savings Allocation: ${goal.name}`,
-          tags: "savings-goal,allocation",
-          date: new Date(),
-        },
-      });
-
-      return updatedGoal;
+      return res.goal;
     });
 
     return NextResponse.json(result);

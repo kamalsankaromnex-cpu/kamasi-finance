@@ -3,7 +3,9 @@ import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { authorizeRequest, assertCanMutate } from "@/lib/rbac";
 import { hideIdempotencyKey, isValidIdempotencyKey, isValidTransactionType, parsePositiveMoney } from "@/lib/financial-validation";
-import { debitAccountWithinLimit } from "@/lib/ledger";
+import { FinancialCommand } from "@/finance/financial-command";
+import { validateClassificationCombination } from "@/lib/services/classification-service";
+import { AuditService } from "@/finance/audit/audit.service";
 
 export async function GET(req: Request) {
   try {
@@ -11,18 +13,58 @@ export async function GET(req: Request) {
     if ("errorResponse" in auth) return auth.errorResponse;
     const { session } = auth;
 
+    const url = new URL(req.url);
+    const paramProfileId = url.searchParams.get("profileId");
+    const paramType = url.searchParams.get("type");
+
+    const andConditions: any[] = [
+      { OR: [{ transferAccountId: null }, { transferAccount: { is: { OR: [{ isShared: true }, { userId: session.id }] } } }] },
+    ];
+
+    if (paramType) {
+      if (!isValidTransactionType(paramType)) {
+        return NextResponse.json(
+          { error: "Invalid transaction type filter. Allowed: INCOME, EXPENSE, TRANSFER" },
+          { status: 400 }
+        );
+      }
+      andConditions.push({ type: paramType });
+    }
+
+    if (paramProfileId) {
+      if (paramProfileId !== "ALL") {
+        const profile = await prisma.familyProfile.findFirst({
+          where: { id: paramProfileId, householdId: session.householdId },
+        });
+        if (!profile) return NextResponse.json({ error: "Forbidden: Profile not in household" }, { status: 403 });
+        andConditions.push({ profileId: paramProfileId });
+      }
+    } else if (session.activeProfile && !session.activeProfile.isFamilyView) {
+      if (session.activeProfile.isPrimary) {
+        andConditions.push({
+          OR: [{ profileId: session.activeProfile.id }, { profileId: null }],
+        });
+      } else {
+        andConditions.push({ profileId: session.activeProfile.id });
+      }
+    }
+
     const transactions = await prisma.transaction.findMany({
       where: {
         householdId: session.householdId,
         account: { is: { OR: [{ isShared: true }, { userId: session.id }] } },
-        AND: [{ OR: [{ transferAccountId: null }, { transferAccount: { is: { OR: [{ isShared: true }, { userId: session.id }] } } }] }],
+        AND: andConditions,
       },
       orderBy: { date: "desc" },
       include: {
         account: { select: { id: true, name: true, type: true, balance: true, currency: true, isShared: true, userId: true } },
         transferAccount: { select: { id: true, name: true, type: true, balance: true, currency: true, isShared: true, userId: true } },
         category: true,
+        scope: true,
+        subcategory: true,
+        costCenter: true,
         user: { select: { id: true, name: true } },
+        profile: { select: { id: true, name: true, relationship: true, color: true } },
       },
     });
     return NextResponse.json(transactions.map(hideIdempotencyKey));
@@ -45,11 +87,85 @@ export async function POST(req: Request) {
     if (forbidden) return forbidden;
 
     const body = await req.json();
-    const { accountId, categoryId, date, amount, type, transferAccountId, description, notes, tags } = body;
+    const {
+      accountId,
+      categoryId,
+      scopeId,
+      subcategoryId,
+      costCenterId,
+      date,
+      amount,
+      type,
+      status: requestedStatus,
+      transferAccountId,
+      description,
+      notes,
+      tags,
+      merchant,
+      receiptUrl,
+      splitsJson,
+      reimbursementStatus,
+      reimbursedAmount,
+      profileId: bodyProfileId,
+    } = body;
+
+    const txnStatus = requestedStatus === "DRAFT" ? "DRAFT" : "POSTED";
 
     if (!accountId || amount === undefined || amount === null || typeof description !== "string" || !description.trim()) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
+
+    let targetProfileId: string | null = null;
+    if (typeof bodyProfileId === "string" && bodyProfileId.trim()) {
+      const p = await prisma.familyProfile.findFirst({
+        where: { id: bodyProfileId.trim(), householdId: session.householdId, isActive: true },
+      });
+      if (!p) return NextResponse.json({ error: "Forbidden: Profile not in household" }, { status: 403 });
+      targetProfileId = p.id;
+    } else if (session.activeProfile && !session.activeProfile.isFamilyView) {
+      targetProfileId = session.activeProfile.id;
+    } else {
+      const primary = await prisma.familyProfile.findFirst({
+        where: { householdId: session.householdId, isPrimary: true, isActive: true },
+      });
+      targetProfileId = primary?.id || null;
+    }
+
+    // Validate classification combination if any classification fields provided
+    if (scopeId || categoryId || subcategoryId || costCenterId) {
+      const classValidation = await validateClassificationCombination({
+        householdId: session.householdId,
+        scopeId,
+        categoryId,
+        subcategoryId,
+        costCenterId,
+        isNewRecord: true,
+      });
+
+      if (!classValidation.valid) {
+        return NextResponse.json({ error: classValidation.error }, { status: 400 });
+      }
+    }
+
+    // Validate splits sum if splitsJson is provided
+    if (splitsJson) {
+      try {
+        const parsedSplits = typeof splitsJson === "string" ? JSON.parse(splitsJson) : splitsJson;
+        if (Array.isArray(parsedSplits) && parsedSplits.length > 0) {
+          const splitSum = parsedSplits.reduce((acc: number, s: any) => acc + (parseFloat(s.amount) || 0), 0);
+          const totalNum = parseFloat(String(amount));
+          if (Math.abs(splitSum - totalNum) > 0.01) {
+            return NextResponse.json(
+              { error: `Split amounts sum (${splitSum.toFixed(2)}) must equal total transaction amount (${totalNum.toFixed(2)})` },
+              { status: 400 }
+            );
+          }
+        }
+      } catch {
+        return NextResponse.json({ error: "Invalid splitsJson format" }, { status: 400 });
+      }
+    }
+
     idempotencyKey = req.headers.get("Idempotency-Key")?.trim() || null;
     if (!idempotencyKey || !isValidIdempotencyKey(idempotencyKey)) {
       return NextResponse.json({ error: "A valid Idempotency-Key header is required" }, { status: 400 });
@@ -123,38 +239,88 @@ export async function POST(req: Request) {
       }
     }
 
-    // Atomic Double-Entry Database Transaction Scoped to Session Household
+    // Atomic Database Transaction Scoped to Session Household
     const result = await prisma.$transaction(async (tx) => {
+      let postedJournal: any = null;
+      if (txnStatus === "POSTED") {
+        if (normalizedType === "INCOME") {
+          postedJournal = await FinancialCommand.postIncome(tx, {
+            householdId: session.householdId,
+            accountId,
+            amount: decAmount,
+            description: description.trim(),
+            categoryId,
+            date: txnDate,
+            idempotencyKey,
+          });
+        } else if (normalizedType === "EXPENSE") {
+          postedJournal = await FinancialCommand.postExpense(tx, {
+            householdId: session.householdId,
+            accountId,
+            amount: decAmount,
+            description: description.trim(),
+            categoryId,
+            date: txnDate,
+            idempotencyKey,
+          });
+        } else if (normalizedType === "TRANSFER") {
+          postedJournal = await FinancialCommand.postTransfer(tx, {
+            householdId: session.householdId,
+            sourceAccountId: accountId,
+            destinationAccountId: transferAccountId!,
+            amount: decAmount,
+            description: description.trim(),
+            date: txnDate,
+            idempotencyKey,
+          });
+        }
+      }
+
       const createdTxn = await tx.transaction.create({
         data: {
           householdId: session.householdId,
+          profileId: targetProfileId,
           accountId,
           categoryId: categoryId || null,
+          scopeId: scopeId || null,
+          subcategoryId: subcategoryId || null,
+          costCenterId: costCenterId || null,
           userId: session.id,
+          journalId: postedJournal?.id || null,
           idempotencyKey,
           date: txnDate,
           amount: decAmount,
           type: normalizedType,
+          status: txnStatus,
+          postedAt: txnStatus === "POSTED" ? new Date() : null,
           transferAccountId: normalizedType === "TRANSFER" ? transferAccountId : null,
           description: description.trim(),
           notes: notes || null,
           tags: tags || null,
+          merchant: merchant || null,
+          receiptUrl: receiptUrl || null,
+          splitsJson: splitsJson ? (typeof splitsJson === "string" ? splitsJson : JSON.stringify(splitsJson)) : null,
+          reimbursementStatus: reimbursementStatus || "NONE",
+          reimbursedAmount: reimbursedAmount ? new Prisma.Decimal(reimbursedAmount) : new Prisma.Decimal(0),
         },
       });
 
-      if (normalizedType === "INCOME") {
-        await tx.account.update({
-          where: { id: accountId },
-          data: { balance: { increment: decAmount } },
-        });
-      } else if (normalizedType === "EXPENSE") {
-        await debitAccountWithinLimit(tx, { accountId, householdId: session.householdId, amount: decAmount });
-      } else if (normalizedType === "TRANSFER") {
-        await debitAccountWithinLimit(tx, { accountId, householdId: session.householdId, amount: decAmount });
-        await tx.account.update({ where: { id: transferAccountId }, data: { balance: { increment: decAmount } } });
-      }
-
       return createdTxn;
+    });
+
+    await AuditService.record(prisma, {
+      householdId: session.householdId,
+      actorUserId: session.id,
+      action: "CREATE",
+      entityType: "TRANSACTION",
+      entityId: result.id,
+      metadata: {
+        amount: result.amount.toString(),
+        type: result.type,
+        accountId: result.accountId,
+        profileId: targetProfileId,
+        userEmail: session.email,
+      },
     });
 
     return NextResponse.json(hideIdempotencyKey(result), { status: 201 });

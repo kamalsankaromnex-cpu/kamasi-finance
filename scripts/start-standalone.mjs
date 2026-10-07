@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 import path from "node:path";
 
 const databaseUrl = process.env.DATABASE_URL;
@@ -7,6 +7,14 @@ if (databaseUrl?.startsWith("file:")) {
   if (filePath && !path.isAbsolute(filePath)) {
     process.env.DATABASE_URL = `file:${path.resolve(process.cwd(), "prisma", filePath)}`;
   }
+}
+
+try {
+  console.log("Executing database migration deployment (npx prisma migrate deploy)...");
+  execSync("npx prisma migrate deploy", { stdio: "inherit", env: process.env });
+} catch (err) {
+  console.error("Database migration failed during startup:", err);
+  process.exit(1);
 }
 
 const server = spawn(process.execPath, [path.join(process.cwd(), ".next", "standalone", "server.js")], {

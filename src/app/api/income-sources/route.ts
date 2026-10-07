@@ -142,7 +142,7 @@ export async function POST(req: Request) {
             expectedAmount: decExpected,
             receivedAmount: new Prisma.Decimal(0),
             outstandingAmount: decExpected,
-            status: "PENDING",
+            status: "EXPECTED",
           },
         });
       }

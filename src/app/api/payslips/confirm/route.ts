@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { authorizeRequest, assertCanMutate } from "@/lib/rbac";
 import { parseIsoDate, parsePositiveMoney } from "@/lib/financial-validation";
+import { FinancialCommand } from "@/finance/financial-command";
 
 export async function POST(req: Request) {
   try {
@@ -77,7 +78,16 @@ export async function POST(req: Request) {
       });
       if (claim.count !== 1) throw new Error("PAYSLIP_ALREADY_CONFIRMED");
 
-      // 1. Create Canonical Income Transaction
+      // 1. Post Financial Command (posts double-entry journal & credits account balance ONCE)
+      await FinancialCommand.postIncome(tx, {
+        householdId: session.householdId,
+        accountId,
+        amount: decCredited,
+        description: `Salary Credit: ${payslip.employment.employerName} (${payslip.payPeriod})`,
+        date: creditDate,
+      });
+
+      // 2. Create Canonical Income Transaction
       const transaction = await tx.transaction.create({
         data: {
           householdId: session.householdId,
@@ -95,11 +105,7 @@ export async function POST(req: Request) {
         },
       });
 
-      // 2. Canonical Single Balance Increment (INCREMENTED ONCE AND ONLY ONCE)
-      const updatedAccount = await tx.account.update({
-        where: { id: accountId },
-        data: { balance: { increment: decCredited } },
-      });
+      const updatedAccount = await tx.account.findUniqueOrThrow({ where: { id: accountId } });
 
       // 3. Update PayslipRecord Status & Link Transaction ID
       const status = decCredited.gte(payslip.netSalary) ? "CONFIRMED_CREDITED" : "PARTIALLY_CREDITED";

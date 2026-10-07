@@ -5,7 +5,7 @@ import { AppLayout } from "@/components/layout/app-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { formatINR } from "@/lib/currency";
-import { Download } from "lucide-react";
+import { Download, Printer } from "lucide-react";
 import { exportToCSV } from "@/lib/csv";
 import { summarizeMonth } from "@/lib/reporting";
 
@@ -16,6 +16,8 @@ interface ReportTransaction {
   amount: string | number;
   type: string;
   isVoided?: boolean;
+  refundOfId?: string | null;
+  refundedAmount?: string | number | null;
   accountId: string;
   categoryId: string | null;
   account?: { name: string } | null;
@@ -82,9 +84,14 @@ export default function ReportsPage() {
             <h1 className="text-2xl font-bold tracking-tight">Executive Financial Reports</h1>
             <p className="mt-0.5 text-sm text-muted-foreground">Household cash flow calculated from posted ledger transactions.</p>
           </div>
-          <Button onClick={handleExport} disabled={loading || transactions.length === 0} className="gap-2 font-semibold">
-            <Download className="h-4 w-4" /> Download Full CSV Statement
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button onClick={() => window.print()} variant="outline" className="gap-2 font-semibold">
+              <Printer className="h-4 w-4" /> Print / Save PDF
+            </Button>
+            <Button onClick={handleExport} disabled={loading || transactions.length === 0} className="gap-2 font-semibold">
+              <Download className="h-4 w-4" /> Download Full CSV Statement
+            </Button>
+          </div>
         </div>
 
         {error && <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{error}</p>}

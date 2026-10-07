@@ -106,5 +106,60 @@ export async function generatePendingOccurrences(
     }
   }
 
+  // Credit Card Billing Cycle Statement Reminder Generation
+  const creditCards = await prisma.account.findMany({
+    where: {
+      type: "CREDIT",
+      isArchived: false,
+      billingCycleDay: { not: null },
+      ...(options?.householdId ? { householdId: options.householdId } : {}),
+    },
+  });
+
+  const now = new Date();
+  for (const card of creditCards) {
+    if (!card.billingCycleDay) continue;
+    const currentMonthDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), Math.min(card.billingCycleDay, 28)));
+    const normalizedDue = normalizeToUtcMidnight(currentMonthDate);
+
+    let cardRule = await prisma.recurringTransaction.findFirst({
+      where: { householdId: card.householdId, accountId: card.id, name: `Credit Card Bill: ${card.name}` },
+    });
+    if (!cardRule) {
+      cardRule = await prisma.recurringTransaction.create({
+        data: {
+          householdId: card.householdId,
+          accountId: card.id,
+          name: `Credit Card Bill: ${card.name}`,
+          amount: card.balance,
+          type: "EXPENSE",
+          frequency: "MONTHLY",
+          nextDueDate: normalizedDue,
+        },
+      });
+    }
+
+    await prisma.recurringBillOccurrence.upsert({
+      where: {
+        recurringRuleId_dueDate: {
+          recurringRuleId: cardRule.id,
+          dueDate: normalizedDue,
+        },
+      },
+      create: {
+        householdId: card.householdId,
+        recurringRuleId: cardRule.id,
+        name: `Statement Due: ${card.name}`,
+        dueDate: normalizedDue,
+        expectedAmount: card.balance,
+        outstandingAmount: card.balance,
+        status: "UPCOMING",
+      },
+      update: {
+        expectedAmount: card.balance,
+      },
+    });
+  }
+
   return { count: generated.length, occurrences: generated };
 }

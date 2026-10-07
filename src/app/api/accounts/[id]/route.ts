@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { authorizeRequest, assertCanMutate } from "@/lib/rbac";
 import { maskAccountNumber, parseFiniteMoney, parseIsoDate, parseNonNegativeMoney } from "@/lib/financial-validation";
+import { FinancialCommand } from "@/finance/financial-command";
 
 export async function GET(
   req: Request,
@@ -16,7 +17,10 @@ export async function GET(
 
     const account = await prisma.account.findFirst({
       where: { id, householdId: session.householdId, OR: [{ isShared: true }, { userId: session.id }] },
-      include: { userHolder: { select: { id: true, name: true } } },
+      include: {
+        userHolder: { select: { id: true, name: true, avatarUrl: true } },
+        financialInstitution: { select: { id: true, name: true, shortCode: true, logoUrl: true } },
+      },
     });
 
     if (!account) {
@@ -52,6 +56,10 @@ export async function PUT(
       accountNumber,
       currency,
       isShared,
+      financialInstitutionId,
+      logoMode,
+      customLogoUrl,
+      iconName,
       creditLimit,
       billingCycleDay,
       paymentDueDate,
@@ -72,6 +80,10 @@ export async function PUT(
       return NextResponse.json({ error: "Account not found" }, { status: 404 });
     }
 
+    const hasLedgerActivity = (await prisma.journalEntry.count({
+      where: { accountId: id },
+    })) > 0;
+
     const updateData: Prisma.AccountUpdateInput = {};
     if (name !== undefined) {
       if (typeof name !== "string" || !name.trim() || name.trim().length > 120) return NextResponse.json({ error: "Account name must be 1–120 characters" }, { status: 400 });
@@ -79,6 +91,9 @@ export async function PUT(
     }
     if (type !== undefined) {
       if (typeof type !== "string" || !["BANK", "CREDIT", "INVESTMENT", "CASH", "LOAN"].includes(type)) return NextResponse.json({ error: "Invalid account type" }, { status: 400 });
+      if (type !== existing.type && hasLedgerActivity) {
+        return NextResponse.json({ error: "Account type cannot be changed after financial activity exists. Create a replacement account instead." }, { status: 400 });
+      }
       updateData.type = type;
     }
     let requestedBalance: Prisma.Decimal | null = null;
@@ -92,11 +107,30 @@ export async function PUT(
     }
     if (currency !== undefined) {
       if (typeof currency !== "string" || !/^[A-Za-z]{3}$/.test(currency)) return NextResponse.json({ error: "Currency must be a three-letter code" }, { status: 400 });
-      updateData.currency = currency.toUpperCase();
+      const newCurrency = currency.toUpperCase();
+      if (newCurrency !== existing.currency && hasLedgerActivity) {
+        return NextResponse.json({ error: "Account currency cannot be changed after financial activity exists." }, { status: 400 });
+      }
+      updateData.currency = newCurrency;
     }
     if (isShared !== undefined) {
       if (typeof isShared !== "boolean") return NextResponse.json({ error: "Sharing setting must be boolean" }, { status: 400 });
       updateData.isShared = isShared;
+    }
+    if (financialInstitutionId !== undefined) {
+      updateData.financialInstitution = financialInstitutionId
+        ? { connect: { id: String(financialInstitutionId).trim() } }
+        : { disconnect: true };
+    }
+    if (logoMode !== undefined) {
+      if (!["AUTO", "CUSTOM", "ICON", "INITIAL"].includes(String(logoMode))) return NextResponse.json({ error: "Invalid logo mode" }, { status: 400 });
+      updateData.logoMode = String(logoMode);
+    }
+    if (customLogoUrl !== undefined) {
+      updateData.customLogoUrl = customLogoUrl ? String(customLogoUrl).trim() : null;
+    }
+    if (iconName !== undefined) {
+      updateData.iconName = iconName ? String(iconName).trim() : null;
     }
     if (creditLimit !== undefined) {
       const parsed = creditLimit !== null && creditLimit !== "" ? parseNonNegativeMoney(creditLimit) : null;
@@ -127,26 +161,24 @@ export async function PUT(
     }
 
     const updated = await prisma.$transaction(async (tx) => {
-      const account = await tx.account.update({ where: { id }, data: updateData });
+      await tx.account.update({ where: { id }, data: updateData });
+
       if (requestedBalance && !requestedBalance.equals(existing.balance)) {
-        const increase = requestedBalance.greaterThan(existing.balance);
-        const difference = increase
-          ? Prisma.Decimal.sub(requestedBalance, existing.balance)
-          : Prisma.Decimal.sub(existing.balance, requestedBalance);
-        await tx.transaction.create({
-          data: {
-            householdId: session.householdId,
-            accountId: id,
-            userId: session.id,
-            amount: difference,
-            type: increase ? "ADJUSTMENT_INCREASE" : "ADJUSTMENT_DECREASE",
-            description: "Account balance adjustment",
-            notes: "Recorded from account balance reconciliation",
-          },
+        const diff = requestedBalance.sub(existing.balance);
+        await FinancialCommand.postAdjustment(tx, {
+          householdId: session.householdId,
+          accountId: id,
+          amount: diff,
+          reason: "Manual balance adjustment via settings",
         });
-        return tx.account.update({ where: { id }, data: { balance: requestedBalance } });
       }
-      return account;
+
+      return tx.account.findUniqueOrThrow({
+        where: { id },
+        include: {
+          financialInstitution: { select: { id: true, name: true, shortCode: true, logoUrl: true } },
+        },
+      });
     });
 
     return NextResponse.json(maskAccountNumber(updated));

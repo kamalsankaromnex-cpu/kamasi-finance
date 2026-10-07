@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { AppLayout } from "@/components/layout/app-layout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { formatINR } from "@/lib/currency";
+import { TaxCalculator } from "@/components/tax/tax-calculator";
 import {
   Briefcase,
   PlusCircle,
@@ -321,6 +322,9 @@ export default function SalaryPage() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Indian Tax Regime Calculator */}
+        <TaxCalculator />
 
         {/* Section 1: Employment Profiles */}
         <Card>

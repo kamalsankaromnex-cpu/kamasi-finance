@@ -9,6 +9,8 @@ export function Header() {
   const router = useRouter();
   const [isDark, setIsDark] = useState(false);
   const [householdOpen, setHouseholdOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [switching, setSwitching] = useState(false);
   const [profile, setProfile] = useState<{
     name: string;
     email: string;
@@ -16,6 +18,22 @@ export function Header() {
     householdName: string;
     currency: string;
     memberCount: number;
+    activeProfile?: {
+      id: string;
+      name: string;
+      relationship: string;
+      isPrimary?: boolean;
+      isFamilyView?: boolean;
+      color?: string | null;
+    } | null;
+    availableProfiles?: Array<{
+      id: string;
+      name: string;
+      relationship: string;
+      avatarUrl?: string | null;
+      color?: string | null;
+      isPrimary?: boolean;
+    }>;
   } | null>(null);
 
   useEffect(() => {
@@ -44,6 +62,9 @@ export function Header() {
     .map((part) => part[0]?.toUpperCase())
     .join("") || "U";
 
+  const activeProfile = profile?.activeProfile;
+  const isFamilyView = Boolean(activeProfile?.isFamilyView);
+
   const toggleTheme = () => {
     setIsDark(!isDark);
     if (!isDark) {
@@ -63,11 +84,30 @@ export function Header() {
     router.refresh();
   };
 
+  const handleSwitchProfile = async (targetId: string) => {
+    try {
+      setSwitching(true);
+      const res = await fetch("/api/household/profiles/switch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profileId: targetId }),
+      });
+      if (res.ok) {
+        setProfileOpen(false);
+        window.location.reload();
+      }
+    } catch (err) {
+      console.error("Failed to switch profile", err);
+    } finally {
+      setSwitching(false);
+    }
+  };
+
   return (
     <header className="flex h-16 items-center justify-between border-b bg-card px-6 shadow-2xs">
-      {/* Household & Currency Context */}
-      <div className="flex items-center gap-4">
-        {/* Household Switcher Dropdown */}
+      {/* Household, Profile Context & Currency */}
+      <div className="flex items-center gap-3">
+        {/* Household Dropdown */}
         <div className="relative">
           <button
             onClick={() => setHouseholdOpen(!householdOpen)}
@@ -93,14 +133,128 @@ export function Header() {
           )}
         </div>
 
+        {/* Global Family Profile Switcher Dropdown */}
+        <div className="relative">
+          <button
+            onClick={() => {
+              setProfileOpen(!profileOpen);
+              setHouseholdOpen(false);
+            }}
+            disabled={switching}
+            className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-all shadow-xs ${
+              isFamilyView
+                ? "bg-purple-500/10 text-purple-700 dark:text-purple-300 border-purple-500/30 hover:bg-purple-500/15"
+                : "bg-background text-foreground hover:bg-accent border-primary/30"
+            }`}
+            title="Switch Family Profile"
+          >
+            <div
+              className="flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold text-white shadow-2xs"
+              style={{ backgroundColor: activeProfile?.color || (isFamilyView ? "#8b5cf6" : "#0d9488") }}
+            >
+              {isFamilyView ? "👨‍👩‍👧" : (activeProfile?.name?.[0]?.toUpperCase() || initials[0])}
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="font-bold">{activeProfile?.name || "Select Profile"}</span>
+              <span className="text-[10px] uppercase font-semibold text-muted-foreground opacity-80">
+                ({isFamilyView ? "Aggregated" : activeProfile?.relationship || "Profile"})
+              </span>
+            </div>
+            <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+          </button>
+
+          {profileOpen && (
+            <div className="absolute left-0 top-full mt-1.5 z-50 w-72 rounded-xl border bg-card p-2 shadow-xl animate-in fade-in-80">
+              <div className="flex items-center justify-between px-2 py-1 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                <span>Switch Family Profile</span>
+                <button
+                  onClick={() => {
+                    setProfileOpen(false);
+                    router.push("/choose-profile");
+                  }}
+                  className="text-primary hover:underline font-semibold"
+                >
+                  Picker
+                </button>
+              </div>
+
+              {/* Individual Profiles */}
+              <div className="mt-1 space-y-1">
+                {profile?.availableProfiles?.map((p) => {
+                  const isCurrent = !isFamilyView && activeProfile?.id === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => handleSwitchProfile(p.id)}
+                      className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-xs font-semibold transition-colors ${
+                        isCurrent ? "bg-primary/10 text-primary" : "text-foreground hover:bg-accent"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div
+                          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-2xs"
+                          style={{ backgroundColor: p.color || "#0d9488" }}
+                        >
+                          {p.name[0]?.toUpperCase()}
+                        </div>
+                        <div className="text-left truncate">
+                          <p className="truncate leading-tight">{p.name}</p>
+                          <p className="text-[10px] text-muted-foreground font-normal leading-tight">
+                            {p.relationship} {p.isPrimary ? "• Primary" : ""}
+                          </p>
+                        </div>
+                      </div>
+                      {isCurrent && <Check className="h-4 w-4 shrink-0 text-primary" />}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Family View Option */}
+              <div className="mt-2 border-t pt-2">
+                <button
+                  onClick={() => handleSwitchProfile("ALL")}
+                  className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-xs font-semibold transition-colors ${
+                    isFamilyView ? "bg-purple-500/10 text-purple-700 dark:text-purple-300" : "text-foreground hover:bg-accent"
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-purple-600 text-[11px] font-bold text-white">
+                      🏠
+                    </div>
+                    <div className="text-left">
+                      <p className="leading-tight">Family View</p>
+                      <p className="text-[10px] text-muted-foreground font-normal leading-tight">Household Aggregate (All Members)</p>
+                    </div>
+                  </div>
+                  {isFamilyView && <Check className="h-4 w-4 shrink-0 text-purple-600" />}
+                </button>
+              </div>
+
+              {/* Manage Profiles link */}
+              <div className="mt-2 border-t pt-1.5">
+                <button
+                  onClick={() => {
+                    setProfileOpen(false);
+                    router.push("/family");
+                  }}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-semibold text-primary hover:bg-primary/10 transition-colors"
+                >
+                  <span>+ Manage Family Profiles</span>
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* Base Currency Badge */}
-        <div className="flex items-center gap-1.5 rounded-lg border bg-background/80 px-2.5 py-1 text-xs font-semibold text-muted-foreground">
+        <div className="hidden sm:flex items-center gap-1.5 rounded-lg border bg-background/80 px-2.5 py-1 text-xs font-semibold text-muted-foreground">
           <IndianRupee className="h-3.5 w-3.5 text-emerald-600" />
           <span>{profile?.currency || "INR"}</span>
         </div>
       </div>
 
-      {/* Action Controls & User Profile */}
+      {/* Action Controls & User Identity */}
       <div className="flex items-center gap-3">
         {/* Theme Toggle Button */}
         <Button

@@ -8,9 +8,36 @@ export async function GET(req: Request) {
     if ("errorResponse" in auth) return auth.errorResponse;
     const { session } = auth;
 
+    const { searchParams } = new URL(req.url);
+    const activeOnly = searchParams.get("activeOnly") === "true";
+
+    const includeClause = {
+      subcategories: true,
+      subcategoriesMaster: {
+        select: { id: true, name: true, isActive: true },
+      },
+      scopeCategories: {
+        include: {
+          scope: {
+            select: { id: true, name: true, color: true, isSystem: true },
+          },
+        },
+      },
+      _count: {
+        select: {
+          transactions: true,
+          budgets: true,
+          subcategoriesMaster: true,
+        },
+      },
+    };
+
     let categories = await prisma.category.findMany({
-      where: { householdId: session.householdId },
-      include: { subcategories: true },
+      where: {
+        householdId: session.householdId,
+        ...(activeOnly ? { isActive: true } : {}),
+      },
+      include: includeClause,
       orderBy: { name: "asc" },
     });
 
@@ -46,7 +73,7 @@ export async function GET(req: Request) {
 
       categories = await prisma.category.findMany({
         where: { householdId: session.householdId },
-        include: { subcategories: true },
+        include: includeClause,
         orderBy: { name: "asc" },
       });
     }
@@ -68,25 +95,74 @@ export async function POST(req: Request) {
     if (forbidden) return forbidden;
 
     const body = await req.json();
-    const { name, icon, color, type, parentId } = body;
+    const { name, icon, color, type, parentId, scopeIds } = body;
 
-    if (!name) {
+    if (!name || typeof name !== "string" || !name.trim()) {
       return NextResponse.json({ error: "Category name is required" }, { status: 400 });
     }
 
-    const category = await prisma.category.create({
-      data: {
+    const trimmedName = name.trim();
+
+    // Check duplicate name within household
+    const existing = await prisma.category.findFirst({
+      where: {
         householdId: session.householdId,
-        name: name.trim(),
-        icon: icon || "tag",
-        color: color || "#64748b",
-        type: type || "EXPENSE",
-        parentId: parentId || null,
-        isDefault: false,
+        name: trimmedName,
       },
     });
 
-    return NextResponse.json(category, { status: 201 });
+    if (existing) {
+      return NextResponse.json(
+        { error: `Category "${trimmedName}" already exists in this household` },
+        { status: 400 }
+      );
+    }
+
+    // Atomically create category and scopeCategory links
+    const category = await prisma.$transaction(async (tx) => {
+      const created = await tx.category.create({
+        data: {
+          householdId: session.householdId,
+          name: trimmedName,
+          icon: icon || "tag",
+          color: color || "#64748b",
+          type: type || "EXPENSE",
+          parentId: parentId || null,
+          isDefault: false,
+        },
+      });
+
+      if (Array.isArray(scopeIds) && scopeIds.length > 0) {
+        for (const scopeId of scopeIds) {
+          const scope = await tx.financialScope.findFirst({
+            where: { id: scopeId, householdId: session.householdId },
+          });
+          if (scope) {
+            await tx.scopeCategory.create({
+              data: {
+                scopeId: scope.id,
+                categoryId: created.id,
+              },
+            });
+          }
+        }
+      }
+
+      return created;
+    });
+
+    const fullCategory = await prisma.category.findUnique({
+      where: { id: category.id },
+      include: {
+        scopeCategories: {
+          include: {
+            scope: { select: { id: true, name: true, color: true } },
+          },
+        },
+      },
+    });
+
+    return NextResponse.json(fullCategory, { status: 201 });
   } catch (error) {
     console.error("Failed to create category:", error);
     return NextResponse.json({ error: "Failed to create category" }, { status: 500 });

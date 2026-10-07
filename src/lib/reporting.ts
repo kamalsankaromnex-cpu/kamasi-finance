@@ -3,6 +3,8 @@ export interface LedgerReportRow {
   amount: string | number;
   type: string;
   isVoided?: boolean;
+  refundOfId?: string | null;
+  refundedAmount?: string | number | null;
 }
 
 export function summarizeMonth(rows: LedgerReportRow[], year: number, monthIndex: number) {
@@ -16,8 +18,19 @@ export function summarizeMonth(rows: LedgerReportRow[], year: number, monthIndex
         date.getMonth() !== monthIndex ||
         row.isVoided || row.type === "VOIDED"
       ) return totals;
-      if (row.type === "INCOME") totals.income += amount;
-      if (row.type === "EXPENSE") totals.expenses += amount;
+
+      // Exclude refund income transactions from gross income (refunds reduce expenses, never income)
+      if (row.type === "INCOME" && !row.refundOfId) {
+        totals.income += amount;
+      }
+
+      // Net out any recorded refunds from expense transactions
+      if (row.type === "EXPENSE") {
+        const refunded = Number(row.refundedAmount || 0);
+        const netExpense = Math.max(0, amount - (Number.isFinite(refunded) ? refunded : 0));
+        totals.expenses += netExpense;
+      }
+
       return totals;
     },
     { income: 0, expenses: 0 },

@@ -7,8 +7,8 @@ export async function POST(req: Request) {
     const authHeader = req.headers.get("Authorization");
     const cronSecret = process.env.CRON_SECRET || "internal-cron-secret";
 
-    if (authHeader !== `Bearer ${cronSecret}` && process.env.NODE_ENV === "production") {
-      return NextResponse.json({ error: "Unauthorized cron trigger" }, { status: 401 });
+    if (!authHeader || authHeader !== `Bearer ${cronSecret}`) {
+      return NextResponse.json({ error: "Unauthorized cron trigger: Invalid or missing Bearer token" }, { status: 401 });
     }
 
     const result = await generatePendingOccurrences(prisma);

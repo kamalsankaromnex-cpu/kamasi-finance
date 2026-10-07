@@ -27,10 +27,16 @@ export async function POST(req: Request) {
         data: { status: "ACCEPTED" },
       });
       if (claimed.count !== 1) throw new Error("INVITATION_ALREADY_CLAIMED");
+      const existingMember = await tx.householdMember.findUnique({
+        where: { householdId_userId: { householdId: invite.householdId, userId: user.id } },
+      });
+
+      const newRole = existingMember?.role === "OWNER" ? "OWNER" : invite.role;
+
       return tx.householdMember.upsert({
         where: { householdId_userId: { householdId: invite.householdId, userId: user.id } },
         create: { householdId: invite.householdId, userId: user.id, role: invite.role },
-        update: { role: invite.role },
+        update: { role: newRole },
         select: { role: true },
       });
     });

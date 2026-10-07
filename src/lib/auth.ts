@@ -10,12 +10,24 @@ function getJwtSecretKey() {
   return new TextEncoder().encode(secret);
 }
 
+export interface ActiveProfileContext {
+  id: string;
+  name: string;
+  relationship: string;
+  avatarUrl?: string | null;
+  color?: string | null;
+  isPrimary: boolean;
+  isFamilyView?: boolean;
+}
+
 export interface SessionUser {
   id: string;
   email: string;
   name: string;
   householdId: string;
   role: "OWNER" | "MEMBER" | "VIEWER";
+  activeProfileId?: string | null;
+  activeProfile?: ActiveProfileContext | null;
 }
 
 export async function hashPassword(password: string): Promise<string> {
@@ -50,19 +62,62 @@ export async function getCurrentSession(): Promise<SessionUser | null> {
   return await verifySessionToken(token);
 }
 
-export async function setSessionCookie(user: SessionUser) {
+export async function setSessionCookie(user: SessionUser): Promise<string> {
   const token = await createSessionToken(user);
-  const cookieStore = await cookies();
-  cookieStore.set("kamasi_session", token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    maxAge: 7 * 24 * 60 * 60,
-    path: "/",
-  });
+  try {
+    const cookieStore = await cookies();
+    cookieStore.set("kamasi_session", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 7 * 24 * 60 * 60,
+      path: "/",
+    });
+  } catch {
+    // Graceful fallback when invoked outside Next.js request context (e.g. tests, scripts)
+  }
+  return token;
 }
 
 export async function removeSessionCookie() {
-  const cookieStore = await cookies();
-  cookieStore.delete("kamasi_session");
+  try {
+    const cookieStore = await cookies();
+    cookieStore.delete("kamasi_session");
+    cookieStore.delete("kamasi_active_profile");
+  } catch {
+    // Graceful fallback when invoked outside Next.js request context
+  }
+}
+
+export async function setActiveProfileCookie(profileId: string) {
+  try {
+    const cookieStore = await cookies();
+    cookieStore.set("kamasi_active_profile", profileId, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 7 * 24 * 60 * 60,
+      path: "/",
+    });
+  } catch {
+    // Fallback outside request context
+  }
+}
+
+export async function getActiveProfileCookie(): Promise<string | null> {
+  try {
+    const cookieStore = await cookies();
+    return cookieStore.get("kamasi_active_profile")?.value || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function removeActiveProfileCookie() {
+  try {
+    const cookieStore = await cookies();
+    cookieStore.delete("kamasi_active_profile");
+  } catch {
+    // Fallback outside request context
+  }
 }

@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { prisma } from "../prisma";
+import { FinancialCommand } from "@/finance/financial-command";
+import { TransactionDomainService } from "@/modules/transactions/transaction.service";
 import { Prisma } from "@prisma/client";
 
 describe("Integrated Expense & Budget Management System Tests", () => {
@@ -40,20 +42,38 @@ describe("Integrated Expense & Budget Management System Tests", () => {
         householdId: household.id,
         name: "HDFC Primary Bank",
         type: "BANK",
-        balance: new Prisma.Decimal(100000.0), // Initial balance: ₹1,00,000
+        balance: new Prisma.Decimal(0.0),
       },
     });
     bankAccountId = bank.id;
+
+    await prisma.$transaction(async (tx) => {
+      await FinancialCommand.postOpeningBalance(tx, {
+        householdId: testHouseholdId,
+        accountId: bankAccountId,
+        accountType: "BANK",
+        openingBalance: new Prisma.Decimal(100000.0),
+      });
+    });
 
     const card = await prisma.account.create({
       data: {
         householdId: household.id,
         name: "ICICI Credit Card",
         type: "CREDIT",
-        balance: new Prisma.Decimal(-5000.0), // Initial debt: -₹5,000
+        balance: new Prisma.Decimal(0.0),
       },
     });
     creditCardAccountId = card.id;
+
+    await prisma.$transaction(async (tx) => {
+      await FinancialCommand.postOpeningBalance(tx, {
+        householdId: testHouseholdId,
+        accountId: creditCardAccountId,
+        accountType: "CREDIT",
+        openingBalance: new Prisma.Decimal(-5000.0),
+      });
+    });
   });
 
   it("ACCOUNTING TEST: ₹5,000 actual expense reduces account balance by exactly ₹5,000 (NOT ₹10,000)", async () => {
@@ -62,21 +82,12 @@ describe("Integrated Expense & Budget Management System Tests", () => {
 
     const decAmount = new Prisma.Decimal(expenseAmount);
     await prisma.$transaction(async (tx) => {
-      await tx.transaction.create({
-        data: {
-          householdId: testHouseholdId,
-          accountId: bankAccountId,
-          userId: testUserId,
-          date: new Date(),
-          amount: decAmount,
-          type: "EXPENSE",
-          description: "Office Supplies",
-        },
-      });
-
-      await tx.account.update({
-        where: { id: bankAccountId },
-        data: { balance: { decrement: decAmount } },
+      await TransactionDomainService.createExpense(tx, {
+        householdId: testHouseholdId,
+        userId: testUserId,
+        accountId: bankAccountId,
+        amount: decAmount,
+        description: "Office Supplies",
       });
     });
 
@@ -99,26 +110,25 @@ describe("Integrated Expense & Budget Management System Tests", () => {
       },
     });
 
-    const occurrence = await prisma.recurringBillOccurrence.create({
+    const occ = await prisma.recurringBillOccurrence.create({
       data: {
         householdId: testHouseholdId,
         recurringRuleId: rule.id,
-        name: "Electricity Bill - Oct 2026",
+        name: "Electricity Bill - Sept 2026",
         dueDate: new Date(),
         expectedAmount: new Prisma.Decimal(4500.0),
         paidAmount: new Prisma.Decimal(0.0),
         outstandingAmount: new Prisma.Decimal(4500.0),
-        status: "UPCOMING",
+        status: "DUE",
       },
     });
 
-    expect(occurrence.status).toBe("UPCOMING");
-
     const account = await prisma.account.findUnique({ where: { id: bankAccountId } });
-    expect(Number(account?.balance)).toBe(100000.0); // Completely unchanged at ₹1,00,000
+    expect(Number(account?.balance)).toBe(100000.0); // Balance remains completely unchanged!
+    expect(occ.status).toBe("DUE");
   });
 
-  it("PARTIAL BILL PAYMENT: Partial payment of ₹3,000 against ₹10,000 bill decrements balance by ₹3,000", async () => {
+  it("PARTIAL BILL PAYMENT: Paying ₹3,000 towards ₹10,000 bill leaves ₹7,000 outstanding and status PARTIALLY_PAID", async () => {
     const startBalance = 100000.0;
     const expected = 10000.0;
     const partialPay = 3000.0;
@@ -127,10 +137,10 @@ describe("Integrated Expense & Budget Management System Tests", () => {
       data: {
         householdId: testHouseholdId,
         accountId: bankAccountId,
-        name: "School Quarterly Fee",
+        name: "School Fee Rule",
         amount: new Prisma.Decimal(expected),
         type: "EXPENSE",
-        frequency: "QUARTERLY",
+        frequency: "MONTHLY",
       },
     });
 
@@ -138,7 +148,7 @@ describe("Integrated Expense & Budget Management System Tests", () => {
       data: {
         householdId: testHouseholdId,
         recurringRuleId: rule.id,
-        name: "School Fee Q4",
+        name: "School Fee - Sept 2026",
         dueDate: new Date(),
         expectedAmount: new Prisma.Decimal(expected),
         paidAmount: new Prisma.Decimal(0.0),
@@ -150,6 +160,13 @@ describe("Integrated Expense & Budget Management System Tests", () => {
     // Execute Partial Payment inside single transaction
     const decPay = new Prisma.Decimal(partialPay);
     await prisma.$transaction(async (tx) => {
+      await FinancialCommand.postExpense(tx, {
+        householdId: testHouseholdId,
+        accountId: bankAccountId,
+        amount: decPay,
+        description: "School Fee Part Payment",
+      });
+
       await tx.transaction.create({
         data: {
           householdId: testHouseholdId,
@@ -160,11 +177,6 @@ describe("Integrated Expense & Budget Management System Tests", () => {
           recurringOccurrenceId: occ.id,
           description: "School Fee Part Payment",
         },
-      });
-
-      await tx.account.update({
-        where: { id: bankAccountId },
-        data: { balance: { decrement: decPay } },
       });
 
       await tx.recurringBillOccurrence.update({
@@ -189,40 +201,24 @@ describe("Integrated Expense & Budget Management System Tests", () => {
   it("CREDIT CARD TRANSFER EXCLUSION: Paying credit card bill via TRANSFER does not double-count expenses", async () => {
     // 1. Credit Card Purchase of ₹2,000 (creates EXPENSE on Credit Card account)
     await prisma.$transaction(async (tx) => {
-      await tx.transaction.create({
-        data: {
-          householdId: testHouseholdId,
-          accountId: creditCardAccountId,
-          amount: new Prisma.Decimal(2000.0),
-          type: "EXPENSE",
-          description: "Restaurant Dining",
-        },
-      });
-      await tx.account.update({
-        where: { id: creditCardAccountId },
-        data: { balance: { decrement: new Prisma.Decimal(2000.0) } },
+      await TransactionDomainService.createExpense(tx, {
+        householdId: testHouseholdId,
+        userId: testUserId,
+        accountId: creditCardAccountId,
+        amount: new Prisma.Decimal(2000.0),
+        description: "Restaurant Dining",
       });
     });
 
     // 2. Card Bill Payment of ₹2,000 from Bank -> Credit Card (recorded as TRANSFER)
     await prisma.$transaction(async (tx) => {
-      await tx.transaction.create({
-        data: {
-          householdId: testHouseholdId,
-          accountId: bankAccountId,
-          transferAccountId: creditCardAccountId,
-          amount: new Prisma.Decimal(2000.0),
-          type: "TRANSFER",
-          description: "Credit Card Bill Settlement",
-        },
-      });
-      await tx.account.update({
-        where: { id: bankAccountId },
-        data: { balance: { decrement: new Prisma.Decimal(2000.0) } },
-      });
-      await tx.account.update({
-        where: { id: creditCardAccountId },
-        data: { balance: { increment: new Prisma.Decimal(2000.0) } },
+      await TransactionDomainService.createTransfer(tx, {
+        householdId: testHouseholdId,
+        userId: testUserId,
+        accountId: bankAccountId,
+        transferAccountId: creditCardAccountId,
+        amount: new Prisma.Decimal(2000.0),
+        description: "Credit Card Bill Settlement",
       });
     });
 
@@ -240,8 +236,11 @@ describe("Integrated Expense & Budget Management System Tests", () => {
       data: {
         householdId: testHouseholdId,
         name: "Car Loan",
+        category: "LOAN",
         type: "CAR_LOAN",
-        amount: new Prisma.Decimal(400000.0), // Initial loan: ₹4,00,000
+        status: "ACTIVE",
+        principalAmount: new Prisma.Decimal(400000.0), // Initial loan: ₹4,00,000
+        outstandingAmount: new Prisma.Decimal(400000.0),
       },
     });
 
@@ -251,7 +250,15 @@ describe("Integrated Expense & Budget Management System Tests", () => {
 
     // Post EMI
     await prisma.$transaction(async (tx) => {
-      // 1. Interest recorded as EXPENSE
+      await FinancialCommand.postLoanPayment(tx, {
+        householdId: testHouseholdId,
+        payingAccountId: bankAccountId,
+        liabilityName: "Car Loan",
+        principalAmount: new Prisma.Decimal(principalPart),
+        interestAmount: new Prisma.Decimal(interestPart),
+      });
+
+      // Interest recorded as EXPENSE transaction
       await tx.transaction.create({
         data: {
           householdId: testHouseholdId,
@@ -262,21 +269,15 @@ describe("Integrated Expense & Budget Management System Tests", () => {
         },
       });
 
-      // 2. Bank balance decremented by total EMI
-      await tx.account.update({
-        where: { id: bankAccountId },
-        data: { balance: { decrement: new Prisma.Decimal(emiTotal) } },
-      });
-
-      // 3. Principal decrements Liability balance
+      // Principal decrements Liability balance
       await tx.liability.update({
         where: { id: loanLiability.id },
-        data: { amount: { decrement: new Prisma.Decimal(principalPart) } },
+        data: { outstandingAmount: { decrement: new Prisma.Decimal(principalPart) } },
       });
     });
 
     const updatedLiability = await prisma.liability.findUnique({ where: { id: loanLiability.id } });
-    expect(Number(updatedLiability?.amount)).toBe(388000.0); // Reduced by ₹12,000 principal!
+    expect(Number(updatedLiability?.outstandingAmount)).toBe(388000.0); // Reduced by ₹12,000 principal!
 
     const expenseTxns = await prisma.transaction.findMany({
       where: { householdId: testHouseholdId, type: "EXPENSE" },
@@ -296,7 +297,7 @@ describe("Integrated Expense & Budget Management System Tests", () => {
       },
     });
 
-    const budget = await prisma.budget.create({
+    await prisma.budget.create({
       data: {
         householdId: testHouseholdId,
         categoryId: category.id,
@@ -309,21 +310,13 @@ describe("Integrated Expense & Budget Management System Tests", () => {
     // Add ₹2,500 expense
     const decAmount = new Prisma.Decimal(expenseAmount);
     await prisma.$transaction(async (tx) => {
-      await tx.transaction.create({
-        data: {
-          householdId: testHouseholdId,
-          accountId: bankAccountId,
-          categoryId: category.id,
-          userId: testUserId,
-          date: new Date(2026, 8, 20),
-          amount: decAmount,
-          type: "EXPENSE",
-          description: "Supermarket Order",
-        },
-      });
-      await tx.account.update({
-        where: { id: bankAccountId },
-        data: { balance: { decrement: decAmount } },
+      await TransactionDomainService.createExpense(tx, {
+        householdId: testHouseholdId,
+        userId: testUserId,
+        accountId: bankAccountId,
+        categoryId: category.id,
+        amount: decAmount,
+        description: "Supermarket Order",
       });
     });
 
@@ -373,6 +366,13 @@ describe("Integrated Expense & Budget Management System Tests", () => {
     // Record partial payment of ₹6,000
     const decPartial = new Prisma.Decimal(partial);
     await prisma.$transaction(async (tx) => {
+      await FinancialCommand.postExpense(tx, {
+        householdId: testHouseholdId,
+        accountId: bankAccountId,
+        amount: decPartial,
+        description: "Partial Maintenance Payment",
+      });
+
       await tx.transaction.create({
         data: {
           householdId: testHouseholdId,
@@ -384,10 +384,7 @@ describe("Integrated Expense & Budget Management System Tests", () => {
           description: "Partial Maintenance Payment",
         },
       });
-      await tx.account.update({
-        where: { id: bankAccountId },
-        data: { balance: { decrement: decPartial } },
-      });
+
       await tx.recurringBillOccurrence.update({
         where: { id: occ.id },
         data: {
@@ -407,40 +404,24 @@ describe("Integrated Expense & Budget Management System Tests", () => {
   it("ACCEPTANCE 4: Pay a credit card bill and confirm it doesn't count as a second expense", async () => {
     // Original Credit Card Purchase: ₹4,000 EXPENSE
     await prisma.$transaction(async (tx) => {
-      await tx.transaction.create({
-        data: {
-          householdId: testHouseholdId,
-          accountId: creditCardAccountId,
-          amount: new Prisma.Decimal(4000.0),
-          type: "EXPENSE",
-          description: "Electronics Purchase",
-        },
-      });
-      await tx.account.update({
-        where: { id: creditCardAccountId },
-        data: { balance: { decrement: new Prisma.Decimal(4000.0) } },
+      await TransactionDomainService.createExpense(tx, {
+        householdId: testHouseholdId,
+        userId: testUserId,
+        accountId: creditCardAccountId,
+        amount: new Prisma.Decimal(4000.0),
+        description: "Electronics Purchase",
       });
     });
 
     // Credit Card Bill Settlement: ₹4,000 TRANSFER
     await prisma.$transaction(async (tx) => {
-      await tx.transaction.create({
-        data: {
-          householdId: testHouseholdId,
-          accountId: bankAccountId,
-          transferAccountId: creditCardAccountId,
-          amount: new Prisma.Decimal(4000.0),
-          type: "TRANSFER",
-          description: "Card Bill Settlement",
-        },
-      });
-      await tx.account.update({
-        where: { id: bankAccountId },
-        data: { balance: { decrement: new Prisma.Decimal(4000.0) } },
-      });
-      await tx.account.update({
-        where: { id: creditCardAccountId },
-        data: { balance: { increment: new Prisma.Decimal(4000.0) } },
+      await TransactionDomainService.createTransfer(tx, {
+        householdId: testHouseholdId,
+        userId: testUserId,
+        accountId: bankAccountId,
+        transferAccountId: creditCardAccountId,
+        amount: new Prisma.Decimal(4000.0),
+        description: "Card Bill Settlement",
       });
     });
 
@@ -523,4 +504,3 @@ describe("Integrated Expense & Budget Management System Tests", () => {
     expect(Array.isArray(occurrences)).toBe(true);
   });
 });
-

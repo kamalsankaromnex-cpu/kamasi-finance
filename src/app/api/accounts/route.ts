@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { authorizeRequest, assertCanMutate } from "@/lib/rbac";
 import { maskAccountNumber, parseFiniteMoney, parseIsoDate, parseNonNegativeMoney } from "@/lib/financial-validation";
+import { FinancialCommand } from "@/finance/financial-command";
+import { Prisma } from "@prisma/client";
 
 export async function GET(req: Request) {
   try {
@@ -19,11 +21,35 @@ export async function GET(req: Request) {
         ...(includeArchived ? {} : { isArchived: false }),
       },
       include: {
-        userHolder: { select: { id: true, name: true } },
+        userHolder: { select: { id: true, name: true, avatarUrl: true } },
+        financialInstitution: { select: { id: true, name: true, shortCode: true, logoUrl: true } },
       },
       orderBy: { createdAt: "asc" },
     });
-    return NextResponse.json(accounts.map(maskAccountNumber));
+
+    // Fetch household members for shared accounts
+    const householdMembers = await prisma.householdMember.findMany({
+      where: { householdId: session.householdId },
+      include: {
+        user: { select: { id: true, name: true, avatarUrl: true } },
+      },
+    });
+
+    const enrichedAccounts = accounts.map((acc) => {
+      const masked = maskAccountNumber(acc);
+      return {
+        ...masked,
+        // For shared accounts, attach all authorized household members
+        // For personal accounts, show only the single user holder for privacy
+        sharedMembers: acc.isShared
+          ? householdMembers.map((m) => ({ id: m.user.id, name: m.user.name, avatarUrl: m.user.avatarUrl }))
+          : acc.userHolder
+          ? [{ id: acc.userHolder.id, name: acc.userHolder.name, avatarUrl: (acc.userHolder as any).avatarUrl || null }]
+          : [],
+      };
+    });
+
+    return NextResponse.json(enrichedAccounts);
   } catch (error) {
     console.error("Failed to fetch accounts:", error);
     return NextResponse.json({ error: "Failed to fetch accounts" }, { status: 500 });
@@ -48,6 +74,10 @@ export async function POST(req: Request) {
       accountNumber,
       currency,
       isShared,
+      financialInstitutionId,
+      logoMode,
+      customLogoUrl,
+      iconName,
       creditLimit,
       billingCycleDay,
       paymentDueDate,
@@ -63,6 +93,8 @@ export async function POST(req: Request) {
     if (accountNumber !== undefined && accountNumber !== null && (typeof accountNumber !== "string" || accountNumber.length > 64 || /[\r\n]/.test(accountNumber))) return NextResponse.json({ error: "Account number is invalid" }, { status: 400 });
     if (currency !== undefined && (typeof currency !== "string" || !/^[A-Za-z]{3}$/.test(currency))) return NextResponse.json({ error: "Currency must be a three-letter code" }, { status: 400 });
     if (isShared !== undefined && typeof isShared !== "boolean") return NextResponse.json({ error: "Sharing setting must be boolean" }, { status: 400 });
+    if (logoMode !== undefined && !["AUTO", "CUSTOM", "ICON", "INITIAL"].includes(String(logoMode))) return NextResponse.json({ error: "Invalid logo mode" }, { status: 400 });
+
     const decCreditLimit = creditLimit === undefined || creditLimit === null || creditLimit === "" ? null : parseNonNegativeMoney(creditLimit);
     const decInterestRate = interestRate === undefined || interestRate === null || interestRate === "" ? null : parseNonNegativeMoney(interestRate);
     if (creditLimit !== undefined && creditLimit !== null && creditLimit !== "" && !decCreditLimit) return NextResponse.json({ error: "Credit limit must be non-negative" }, { status: 400 });
@@ -74,23 +106,45 @@ export async function POST(req: Request) {
     const maturity = maturityDate === undefined || maturityDate === null || maturityDate === "" ? null : parseIsoDate(maturityDate);
     if (maturityDate !== undefined && maturityDate !== null && maturityDate !== "" && !maturity) return NextResponse.json({ error: "Maturity date must be a valid ISO date" }, { status: 400 });
 
-    const account = await prisma.account.create({
-      data: {
-        householdId: session.householdId,
-        userId: session.id,
-        name: name.trim(),
-        type: String(type || "BANK"),
-        balance: openingBalance,
-        accountNumber: typeof accountNumber === "string" && accountNumber.trim() ? accountNumber.trim() : null,
-        currency: (currency || "INR").toUpperCase(),
-        isShared: isShared ?? true,
-        creditLimit: decCreditLimit,
-        billingCycleDay: cycleDay,
-        paymentDueDate: dueDay,
-        interestRate: decInterestRate,
-        maturityDate: maturity,
-        isArchived: false,
-      },
+    const account = await prisma.$transaction(async (tx) => {
+      const acc = await tx.account.create({
+        data: {
+          householdId: session.householdId,
+          userId: session.id,
+          name: name.trim(),
+          type: String(type || "BANK"),
+          balance: new Prisma.Decimal(0),
+          accountNumber: typeof accountNumber === "string" && accountNumber.trim() ? accountNumber.trim() : null,
+          currency: (currency || "INR").toUpperCase(),
+          isShared: isShared ?? true,
+          financialInstitutionId: typeof financialInstitutionId === "string" && financialInstitutionId.trim() ? financialInstitutionId.trim() : null,
+          logoMode: String(logoMode || "AUTO"),
+          customLogoUrl: typeof customLogoUrl === "string" && customLogoUrl.trim() ? customLogoUrl.trim() : null,
+          iconName: typeof iconName === "string" && iconName.trim() ? iconName.trim() : null,
+          creditLimit: decCreditLimit,
+          billingCycleDay: cycleDay,
+          paymentDueDate: dueDay,
+          interestRate: decInterestRate,
+          maturityDate: maturity,
+          isArchived: false,
+        },
+      });
+
+      if (!openingBalance.isZero()) {
+        await FinancialCommand.postOpeningBalance(tx, {
+          householdId: session.householdId,
+          accountId: acc.id,
+          accountType: acc.type,
+          openingBalance,
+        });
+      }
+
+      return tx.account.findUniqueOrThrow({
+        where: { id: acc.id },
+        include: {
+          financialInstitution: { select: { id: true, name: true, shortCode: true, logoUrl: true } },
+        },
+      });
     });
 
     return NextResponse.json(maskAccountNumber(account), { status: 201 });

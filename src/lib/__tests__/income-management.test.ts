@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { prisma } from "../prisma";
+import { FinancialCommand } from "@/finance/financial-command";
+import { TransactionDomainService } from "@/modules/transactions/transaction.service";
 import { Prisma } from "@prisma/client";
 
 describe("Universal Income Management System & Ledger Integrity Tests", () => {
@@ -39,10 +41,19 @@ describe("Universal Income Management System & Ledger Integrity Tests", () => {
         householdId: household.id,
         name: "Primary HDFC Savings",
         type: "BANK",
-        balance: new Prisma.Decimal(100000.0), // Initial balance: ₹1,00,000
+        balance: new Prisma.Decimal(0.0),
       },
     });
     testAccountId = account.id;
+
+    await prisma.$transaction(async (tx) => {
+      await FinancialCommand.postOpeningBalance(tx, {
+        householdId: testHouseholdId,
+        accountId: testAccountId,
+        accountType: "BANK",
+        openingBalance: new Prisma.Decimal(100000.0),
+      });
+    });
   });
 
   it("creates income sources with RECURRING, SEASONAL, and IRREGULAR behaviors", async () => {
@@ -143,7 +154,13 @@ describe("Universal Income Management System & Ledger Integrity Tests", () => {
     // Post Receipt via Unified Atomic Transaction Handler
     const decAmount = new Prisma.Decimal(receiptAmount);
     await prisma.$transaction(async (tx) => {
-      // 1. Transaction creation
+      await FinancialCommand.postIncome(tx, {
+        householdId: testHouseholdId,
+        accountId: testAccountId,
+        amount: decAmount,
+        description: "Goat Sale Lot 1 Receipt",
+      });
+
       await tx.transaction.create({
         data: {
           householdId: testHouseholdId,
@@ -158,13 +175,6 @@ describe("Universal Income Management System & Ledger Integrity Tests", () => {
         },
       });
 
-      // 2. Single Account balance increment
-      await tx.account.update({
-        where: { id: testAccountId },
-        data: { balance: { increment: decAmount } },
-      });
-
-      // 3. Update Occurrence
       await tx.incomeOccurrence.update({
         where: { id: occ.id },
         data: {
@@ -214,6 +224,13 @@ describe("Universal Income Management System & Ledger Integrity Tests", () => {
 
     // 1. Post Partial Receipt 1 (₹20,000)
     await prisma.$transaction(async (tx) => {
+      await FinancialCommand.postIncome(tx, {
+        householdId: testHouseholdId,
+        accountId: testAccountId,
+        amount: new Prisma.Decimal(partial1),
+        description: "Partial Salary 1",
+      });
+
       await tx.transaction.create({
         data: {
           householdId: testHouseholdId,
@@ -225,10 +242,7 @@ describe("Universal Income Management System & Ledger Integrity Tests", () => {
           description: "Partial Salary 1",
         },
       });
-      await tx.account.update({
-        where: { id: testAccountId },
-        data: { balance: { increment: new Prisma.Decimal(partial1) } },
-      });
+
       await tx.incomeOccurrence.update({
         where: { id: occ.id },
         data: {
@@ -246,6 +260,13 @@ describe("Universal Income Management System & Ledger Integrity Tests", () => {
 
     // 2. Post Remaining Settlement (₹23,000)
     await prisma.$transaction(async (tx) => {
+      await FinancialCommand.postIncome(tx, {
+        householdId: testHouseholdId,
+        accountId: testAccountId,
+        amount: new Prisma.Decimal(partial2),
+        description: "Partial Salary 2 Final Settlement",
+      });
+
       await tx.transaction.create({
         data: {
           householdId: testHouseholdId,
@@ -257,10 +278,7 @@ describe("Universal Income Management System & Ledger Integrity Tests", () => {
           description: "Partial Salary 2 Final Settlement",
         },
       });
-      await tx.account.update({
-        where: { id: testAccountId },
-        data: { balance: { increment: new Prisma.Decimal(partial2) } },
-      });
+
       await tx.incomeOccurrence.update({
         where: { id: occ.id },
         data: {
@@ -360,6 +378,13 @@ describe("Universal Income Management System & Ledger Integrity Tests", () => {
     const startBalance = Number(startAccount?.balance);
 
     const result = await prisma.$transaction(async (tx) => {
+      await FinancialCommand.postIncome(tx, {
+        householdId: testHouseholdId,
+        accountId: testAccountId,
+        amount: payslip.netSalary,
+        description: `Salary Credit: ${emp.employerName}`,
+      });
+
       const transaction = await tx.transaction.create({
         data: {
           householdId: testHouseholdId,
@@ -372,11 +397,6 @@ describe("Universal Income Management System & Ledger Integrity Tests", () => {
         },
       });
 
-      const updatedAccount = await tx.account.update({
-        where: { id: testAccountId },
-        data: { balance: { increment: payslip.netSalary } },
-      });
-
       const updatedPayslip = await tx.payslipRecord.update({
         where: { id: payslip.id },
         data: {
@@ -385,6 +405,8 @@ describe("Universal Income Management System & Ledger Integrity Tests", () => {
           transactionId: transaction.id,
         },
       });
+
+      const updatedAccount = await tx.account.findUniqueOrThrow({ where: { id: testAccountId } });
 
       return { updatedAccount, updatedPayslip };
     });

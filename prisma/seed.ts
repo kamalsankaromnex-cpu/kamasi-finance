@@ -6,6 +6,29 @@ const prisma = new PrismaClient();
 async function main() {
   console.log("Seeding database...");
 
+  // 0. Seed Financial Institutions
+  const defaultInstitutions = [
+    { name: "HDFC Bank", shortCode: "HDFC", logoUrl: "/logos/hdfc.png" },
+    { name: "State Bank of India", shortCode: "SBI", logoUrl: "/logos/sbi.png" },
+    { name: "ICICI Bank", shortCode: "ICICI", logoUrl: "/logos/icici.png" },
+    { name: "Axis Bank", shortCode: "AXIS", logoUrl: "/logos/axis.png" },
+    { name: "Kotak Mahindra Bank", shortCode: "KOTAK", logoUrl: "/logos/kotak.png" },
+    { name: "Canara Bank", shortCode: "CANARA", logoUrl: "/logos/canara.png" },
+    { name: "Bank of Baroda", shortCode: "BOB", logoUrl: "/logos/bob.png" },
+    { name: "Punjab National Bank", shortCode: "PNB", logoUrl: "/logos/pnb.png" },
+    { name: "Zerodha Demat", shortCode: "ZERODHA", logoUrl: "/logos/zerodha.png" },
+    { name: "HSBC Bank", shortCode: "HSBC", logoUrl: "/logos/hsbc.png" },
+    { name: "Citi Bank", shortCode: "CITI", logoUrl: "/logos/citi.png" },
+  ];
+
+  for (const inst of defaultInstitutions) {
+    await prisma.financialInstitution.upsert({
+      where: { name: inst.name },
+      update: { shortCode: inst.shortCode, logoUrl: inst.logoUrl },
+      create: inst,
+    });
+  }
+
   // 1. Create Default User
   const passwordHash = await bcrypt.hash("password123", 10);
   const user = await prisma.user.upsert({
@@ -267,35 +290,47 @@ async function main() {
     data: [
       {
         householdId: household.id,
-        accountId: zerodha.id,
+        investmentAccountId: zerodha.id,
         name: "UTI Nifty 50 Index Fund",
         symbol: "UTINIFT50",
+        category: "MUTUAL_FUND",
         type: "MUTUAL_FUND",
-        quantity: 1450.2500,
-        purchasePrice: 180.50,
-        currentPrice: 245.20,
+        status: "ACTIVE",
+        totalQuantity: 1450.2500,
+        totalCostBasis: 261770.125,
+        weightedAverageCost: 180.50,
+        currentPricePerUnit: 245.20,
+        currentMarketValue: 355601.30,
         notes: "Direct Growth Mutual Fund SIP",
       },
       {
         householdId: household.id,
-        accountId: zerodha.id,
+        investmentAccountId: zerodha.id,
         name: "Tata Consultancy Services (TCS)",
         symbol: "TCS.NS",
+        category: "STOCK",
         type: "STOCK",
-        quantity: 120.0000,
-        purchasePrice: 3400.00,
-        currentPrice: 4150.00,
+        status: "ACTIVE",
+        totalQuantity: 120.0000,
+        totalCostBasis: 408000.00,
+        weightedAverageCost: 3400.00,
+        currentPricePerUnit: 4150.00,
+        currentMarketValue: 498000.00,
         notes: "Long-term bluechip equity allocation",
       },
       {
         householdId: household.id,
-        accountId: hdfc.id,
+        investmentAccountId: hdfc.id,
         name: "Sovereign Gold Bond 2024 Series",
         symbol: "SGB2024",
+        category: "GOLD",
         type: "GOLD",
-        quantity: 50.0000,
-        purchasePrice: 6200.00,
-        currentPrice: 7450.00,
+        status: "ACTIVE",
+        totalQuantity: 50.0000,
+        totalCostBasis: 310000.00,
+        weightedAverageCost: 6200.00,
+        currentPricePerUnit: 7450.00,
+        currentMarketValue: 372500.00,
         notes: "Tax-free capital gains gold bond",
       },
     ],
@@ -326,19 +361,23 @@ async function main() {
       {
         householdId: household.id,
         name: "HDFC Home Loan Mortgage",
+        category: "MORTGAGE",
         type: "MORTGAGE",
-        amount: 4200000.00,
+        status: "ACTIVE",
+        principalAmount: 4200000.00,
+        outstandingAmount: 4200000.00,
         interestRate: 8.50,
-        monthlyPayment: 48500.00,
         notes: "20-year home tenure remaining",
       },
       {
         householdId: household.id,
         name: "ICICI Car Loan",
+        category: "LOAN",
         type: "CAR_LOAN",
-        amount: 450000.00,
+        status: "ACTIVE",
+        principalAmount: 450000.00,
+        outstandingAmount: 450000.00,
         interestRate: 9.20,
-        monthlyPayment: 14200.00,
         notes: "3-year tenure remaining",
       },
     ],

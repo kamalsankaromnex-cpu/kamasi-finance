@@ -1,9 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { prisma } from "../prisma";
+import { FinancialCommand } from "@/finance/financial-command";
+import { GoalDomainService } from "@/modules/goals/goal.service";
 import { Prisma } from "@prisma/client";
 
 describe("Phase 2 Prisma Persistence & Transaction Rollback Integration Tests", () => {
   let householdId: string;
+  let userId: string;
   let bankAccountId: string;
   let creditAccountId: string;
   let categoryId: string;
@@ -18,6 +21,16 @@ describe("Phase 2 Prisma Persistence & Transaction Rollback Integration Tests", 
     await prisma.category.deleteMany();
     await prisma.householdMember.deleteMany();
     await prisma.household.deleteMany();
+    await prisma.user.deleteMany();
+
+    const user = await prisma.user.create({
+      data: {
+        email: `persistence_user_${Date.now()}@kamasi.com`,
+        passwordHash: "pass",
+        name: "Persistence User",
+      },
+    });
+    userId = user.id;
 
     // Create persistent test household
     const hh = await prisma.household.create({
@@ -25,16 +38,38 @@ describe("Phase 2 Prisma Persistence & Transaction Rollback Integration Tests", 
     });
     householdId = hh.id;
 
-    // Create test accounts
+    await prisma.householdMember.create({
+      data: { householdId: hh.id, userId: user.id, role: "OWNER" },
+    });
+
+    // Create test accounts starting at 0 and posting opening balances
     const bank = await prisma.account.create({
-      data: { householdId, name: "Test HDFC Bank", type: "BANK", balance: new Prisma.Decimal(345000.00) },
+      data: { householdId, userId, name: "Test HDFC Bank", type: "BANK", balance: new Prisma.Decimal(0) },
     });
     bankAccountId = bank.id;
 
+    await prisma.$transaction(async (tx) => {
+      await FinancialCommand.postOpeningBalance(tx, {
+        householdId,
+        accountId: bankAccountId,
+        accountType: "BANK",
+        openingBalance: new Prisma.Decimal(345000.00),
+      });
+    });
+
     const credit = await prisma.account.create({
-      data: { householdId, name: "Test ICICI Credit", type: "CREDIT", balance: new Prisma.Decimal(-24500.00) },
+      data: { householdId, userId, name: "Test ICICI Credit", type: "CREDIT", balance: new Prisma.Decimal(0) },
     });
     creditAccountId = credit.id;
+
+    await prisma.$transaction(async (tx) => {
+      await FinancialCommand.postOpeningBalance(tx, {
+        householdId,
+        accountId: creditAccountId,
+        accountType: "CREDIT",
+        openingBalance: new Prisma.Decimal(-24500.00),
+      });
+    });
 
     // Create test category
     const cat = await prisma.category.create({
@@ -68,8 +103,16 @@ describe("Phase 2 Prisma Persistence & Transaction Rollback Integration Tests", 
   it("executes atomic double-entry account transfer in database", async () => {
     const transferAmount = new Prisma.Decimal(50000.00);
 
-    // Atomic transaction
+    // Atomic transaction via FinancialCommand
     await prisma.$transaction(async (tx) => {
+      await FinancialCommand.postTransfer(tx, {
+        householdId,
+        sourceAccountId: bankAccountId,
+        destinationAccountId: creditAccountId,
+        amount: transferAmount,
+        description: "Test Credit Card Bill Payment",
+      });
+
       await tx.transaction.create({
         data: {
           householdId,
@@ -79,16 +122,6 @@ describe("Phase 2 Prisma Persistence & Transaction Rollback Integration Tests", 
           type: "TRANSFER",
           description: "Test Credit Card Bill Payment",
         },
-      });
-
-      await tx.account.update({
-        where: { id: bankAccountId },
-        data: { balance: { decrement: transferAmount } },
-      });
-
-      await tx.account.update({
-        where: { id: creditAccountId },
-        data: { balance: { increment: transferAmount } },
       });
     });
 
@@ -108,10 +141,12 @@ describe("Phase 2 Prisma Persistence & Transaction Rollback Integration Tests", 
 
     try {
       await prisma.$transaction(async (tx) => {
-        // Step 1: Update balance
-        await tx.account.update({
-          where: { id: bankAccountId },
-          data: { balance: { decrement: new Prisma.Decimal(100000.00) } },
+        // Step 1: Execute FinancialCommand expense
+        await FinancialCommand.postExpense(tx, {
+          householdId,
+          accountId: bankAccountId,
+          amount: new Prisma.Decimal(100000.00),
+          description: "Attempted Expense",
         });
 
         // Step 2: Intentionally throw error to test rollback
@@ -130,25 +165,12 @@ describe("Phase 2 Prisma Persistence & Transaction Rollback Integration Tests", 
     const depositAmount = new Prisma.Decimal(25000.00);
 
     await prisma.$transaction(async (tx) => {
-      await tx.goal.update({
-        where: { id: goalId },
-        data: { currentAmount: { increment: depositAmount } },
-      });
-
-      await tx.account.update({
-        where: { id: bankAccountId },
-        data: { balance: { decrement: depositAmount } },
-      });
-
-      await tx.transaction.create({
-        data: {
-          householdId,
-          accountId: bankAccountId,
-          amount: depositAmount,
-          type: "EXPENSE",
-          description: "Goal Savings Allocation: Test Emergency Fund",
-          tags: "savings-goal,allocation",
-        },
+      await GoalDomainService.depositToGoal(tx, {
+        goalId,
+        householdId,
+        userId,
+        accountId: bankAccountId,
+        amount: depositAmount,
       });
     });
 

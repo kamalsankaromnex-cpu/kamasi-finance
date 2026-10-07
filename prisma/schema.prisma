@@ -42,12 +42,33 @@ model Household {
   assets                Asset[]
   liabilities           Liability[]
   forecastScenarios     ForecastScenario[]
+  forecastSnapshots     ForecastSnapshot[]
   incomeSources         IncomeSource[]
   incomeOccurrences     IncomeOccurrence[]
   recurringOccurrences  RecurringBillOccurrence[]
   invitations           HouseholdInvitation[]
   employments           EmploymentProfile[]
   payslips              PayslipRecord[]
+  automationRules       AutomationRule[]
+  automationLogs        AutomationExecutionLog[]
+  journals              Journal[]
+  auditEvents           AuditEvent[]
+  alertEvents           AlertEvent[]
+  assetFinancialEvents  AssetFinancialEvent[]
+  liabilityFinancialEvents LiabilityFinancialEvent[]
+  investmentFinancialEvents InvestmentFinancialEvent[]
+  financialScopes       FinancialScope[]
+  subcategories         CategorySubcategory[]
+  costCenters           CostCenter[]
+  lenders               Lender[]
+  borrowings            Borrowing[]
+  repaymentSchedules    RepaymentSchedule[]
+  repaymentInstallments RepaymentInstallment[]
+  borrowingFinancialEvents BorrowingFinancialEvent[]
+  goalFundingPlans      GoalFundingPlan[]
+  fundingAssumptionSets FundingAssumptionSet[]
+  projects              Project[]
+  profiles              FamilyProfile[]
 }
 
 model HouseholdMember {
@@ -62,34 +83,173 @@ model HouseholdMember {
   @@unique([householdId, userId])
 }
 
-model Account {
-  id              String        @id @default(uuid())
-  householdId     String
-  userId          String?
-  name            String
-  type            String        @default("BANK") // BANK, CREDIT, CASH, INVESTMENT, LOAN
-  balance         Decimal       @default(0.00)
-  accountNumber   String?
-  currency        String        @default("INR")
-  isShared        Boolean       @default(true)
-  creditLimit     Decimal?
-  billingCycleDay Int?
-  paymentDueDate  Int?
-  interestRate    Decimal?
-  maturityDate    DateTime?
-  principalAmount Decimal?
-  isArchived      Boolean       @default(false)
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+model FamilyProfile {
+  id           String        @id @default(uuid())
+  householdId  String
+  name         String
+  relationship String        @default("OTHER") // SELF, SPOUSE, PARENT, CHILD, BROTHER, SISTER, GRANDPARENT, GRANDCHILD, RELATIVE, OTHER
+  avatarUrl    String?
+  color        String?       @default("#6366f1")
+  dateOfBirth  DateTime?
+  notes        String?
+  isPrimary    Boolean       @default(false)
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
 
-  household     Household              @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  userHolder    User?                  @relation(fields: [userId], references: [id], onDelete: SetNull)
-  transactions  Transaction[]          @relation("AccountTransactions")
-  transfersIn   Transaction[]          @relation("TransferAccountTransactions")
-  recurring     RecurringTransaction[]
-  investments   Investment[]
-  incomeSources IncomeSource[]
-  payslips      PayslipRecord[]
+  household    Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  accounts     Account[]
+  transactions Transaction[]
+  goals        Goal[]
+  assets       Asset[]
+  investments  Investment[]
+  borrowings   Borrowing[]
+  projects     Project[]
+
+  @@unique([householdId, name])
+  @@index([householdId])
+}
+
+model FinancialInstitution {
+  id         String    @id @default(uuid())
+  name       String    @unique
+  shortCode  String?
+  logoUrl    String?
+  isActive   Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  accounts   Account[]
+}
+
+model FinancialScope {
+  id               String          @id @default(uuid())
+  householdId      String
+  name             String
+  icon             String          @default("layers")
+  color            String          @default("#64748b")
+  sortOrder        Int             @default(0)
+  isSystem         Boolean         @default(false)
+  isActive         Boolean         @default(true)
+  externalSystem   String?
+  externalEntityId String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  household        Household       @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  scopeCategories  ScopeCategory[]
+  transactions     Transaction[]
+  incomeSources    IncomeSource[]
+  assets           Asset[]
+  investments      Investment[]
+  liabilities      Liability[]
+  costCenters      CostCenter[]
+  goals            Goal[]
+  budgets          Budget[]
+  borrowings       Borrowing[]
+
+  @@unique([householdId, name])
+}
+
+model ScopeCategory {
+  id         String         @id @default(uuid())
+  scopeId    String
+  categoryId String
+  createdAt  DateTime       @default(now())
+
+  scope    FinancialScope @relation(fields: [scopeId], references: [id], onDelete: Cascade)
+  category Category       @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([scopeId, categoryId])
+}
+
+model CategorySubcategory {
+  id          String   @id @default(uuid())
+  categoryId  String
+  householdId String
+  name        String
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  category     Category      @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  household    Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+  budgets      Budget[]
+  borrowings   Borrowing[]
+
+  @@unique([householdId, categoryId, name])
+}
+
+model CostCenter {
+  id               String          @id @default(uuid())
+  householdId      String
+  scopeId          String
+  name             String
+  type             String?
+  description      String?
+  icon             String?
+  color            String?
+  sortOrder        Int             @default(0)
+  isSystem         Boolean         @default(false)
+  isActive         Boolean         @default(true)
+  externalSystem   String?
+  externalEntityId String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  household        Household       @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  scope            FinancialScope  @relation(fields: [scopeId], references: [id], onDelete: Cascade)
+  transactions     Transaction[]
+  assets           Asset[]
+  liabilities      Liability[]
+  budgets          Budget[]
+  borrowings       Borrowing[]
+
+  @@unique([householdId, scopeId, name])
+}
+
+model Account {
+  id                     String                @id @default(uuid())
+  householdId            String
+  userId                 String?
+  financialInstitutionId String?
+  name                   String
+  type                   String                @default("BANK") // BANK, CREDIT, CASH, INVESTMENT, LOAN
+  balance                Decimal               @default(0.00)
+  accountNumber          String?
+  currency               String                @default("INR")
+  isShared               Boolean               @default(true)
+  logoMode               String                @default("AUTO") // AUTO, CUSTOM, ICON, INITIAL
+  customLogoUrl          String?
+  iconName               String?
+  creditLimit            Decimal?
+  billingCycleDay        Int?
+  paymentDueDate         Int?
+  interestRate           Decimal?
+  maturityDate           DateTime?
+  principalAmount        Decimal?
+  isArchived             Boolean               @default(false)
+  profileId              String?
+  createdAt              DateTime              @default(now())
+  updatedAt              DateTime              @updatedAt
+
+  household            Household             @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  userHolder           User?                 @relation(fields: [userId], references: [id], onDelete: SetNull)
+  profile              FamilyProfile?        @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  financialInstitution FinancialInstitution? @relation(fields: [financialInstitutionId], references: [id], onDelete: SetNull)
+  transactions         Transaction[]         @relation("AccountTransactions")
+  transfersIn          Transaction[]         @relation("TransferAccountTransactions")
+  recurring            RecurringTransaction[]
+  investments          Investment[]          @relation("InvestmentAccountRef")
+  incomeSources        IncomeSource[]
+  payslips             PayslipRecord[]
+  goals                Goal[]
+  assets               Asset[]               @relation("AssetAccountRef")
+  liabilities          Liability[]           @relation("LiabilityAccountRef")
+  borrowingsReceiving  Borrowing[]           @relation("BorrowingReceivingAccount")
+  borrowingsLiability  Borrowing[]           @relation("BorrowingLiabilityAccount")
+  journalEntries       JournalEntry[]
 }
 
 model Category {
@@ -101,14 +261,19 @@ model Category {
   color         String        @default("#64748b")
   type          String        @default("EXPENSE") // INCOME, EXPENSE, TRANSFER
   isDefault     Boolean       @default(false)
+  isActive      Boolean       @default(true)
   createdAt     DateTime      @default(now())
   household     Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
   parent        Category?     @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
-  subcategories Category[]    @relation("CategoryHierarchy")
-  transactions  Transaction[]
-  recurring     RecurringTransaction[]
-  budgets       Budget[]
-  incomeSources IncomeSource[]
+  subcategories       Category[]            @relation("CategoryHierarchy")
+  transactions        Transaction[]
+  recurring           RecurringTransaction[]
+  budgets             Budget[]
+  incomeSources       IncomeSource[]
+  scopeCategories     ScopeCategory[]
+  subcategoriesMaster CategorySubcategory[]
+  borrowings          Borrowing[]
+  projectCostItems    ProjectCostItem[]
 }
 
 model Transaction {
@@ -116,7 +281,11 @@ model Transaction {
   householdId       String
   accountId         String
   categoryId        String?
+  scopeId           String?
+  subcategoryId     String?
+  costCenterId      String?
   userId            String?
+  profileId         String?
   date              DateTime  @default(now())
   amount            Decimal
   type              String    @default("EXPENSE") // INCOME, EXPENSE, TRANSFER
@@ -133,6 +302,9 @@ model Transaction {
   refundOfId           String?
   merchant              String?
   receiptUrl            String?
+  splitsJson            String?
+  reimbursementStatus   String?   @default("NONE") // NONE, CLAIMED, SETTLED
+  reimbursedAmount      Decimal   @default(0.00)
   recurringRuleId       String?
   recurringOccurrenceId String?
   isRecurring           Boolean   @default(false)
@@ -146,7 +318,11 @@ model Transaction {
   account             Account                  @relation("AccountTransactions", fields: [accountId], references: [id], onDelete: Cascade)
   transferAccount     Account?                 @relation("TransferAccountTransactions", fields: [transferAccountId], references: [id], onDelete: SetNull)
   category            Category?                @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  scope               FinancialScope?          @relation(fields: [scopeId], references: [id], onDelete: SetNull)
+  subcategory         CategorySubcategory?     @relation(fields: [subcategoryId], references: [id], onDelete: SetNull)
+  costCenter          CostCenter?              @relation(fields: [costCenterId], references: [id], onDelete: SetNull)
   user                User?                    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  profile             FamilyProfile?           @relation(fields: [profileId], references: [id], onDelete: SetNull)
   incomeSource        IncomeSource?            @relation(fields: [incomeSourceId], references: [id], onDelete: SetNull)
   occurrence          IncomeOccurrence?        @relation(fields: [occurrenceId], references: [id], onDelete: SetNull)
   recurringRule       RecurringTransaction?    @relation(fields: [recurringRuleId], references: [id], onDelete: SetNull)
@@ -154,8 +330,26 @@ model Transaction {
   payslips            PayslipRecord[]
   refundOf            Transaction?              @relation("TransactionRefunds", fields: [refundOfId], references: [id], onDelete: SetNull)
   refunds             Transaction[]             @relation("TransactionRefunds")
+  projectAllocations  ProjectPaymentAllocation[]
+
+  status                String    @default("POSTED") // DRAFT, POSTED, RECONCILED, REVERSED, ARCHIVED
+  postedAt              DateTime?
+  reconciledAt          DateTime?
+  reversedAt            DateTime?
+  archivedAt            DateTime?
+  archivedByUserId      String?
+  replacementTransactionId String? @unique
+  replacementTransaction   Transaction? @relation("TransactionReplacement", fields: [replacementTransactionId], references: [id], onDelete: SetNull)
+  replacedBy               Transaction? @relation("TransactionReplacement")
+  lifecycleHistory         TransactionLifecycleHistory[]
+
+  journalId            String?   @unique
+  journal              Journal?  @relation(fields: [journalId], references: [id], onDelete: SetNull)
 
   @@index([refundOfId])
+  @@index([householdId, status, date])
+  @@index([householdId, accountId, date])
+  @@index([householdId, categoryId, date])
 }
 
 model RecurringTransaction {
@@ -182,96 +376,324 @@ model RecurringTransaction {
 }
 
 model Budget {
-  id          String    @id @default(uuid())
-  householdId String
-  categoryId  String?
-  month       Int
-  year        Int
-  amount      Decimal
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id            String    @id @default(uuid())
+  householdId   String
+  name          String?
+  periodType    String    @default("MONTHLY") // MONTHLY, QUARTERLY, HALF_YEARLY, YEARLY, CUSTOM
+  startDate     DateTime  @default(now())
+  endDate       DateTime  @default(now())
+  month         Int?
+  year          Int?
+  amount        Decimal
+  status        String    @default("ACTIVE") // DRAFT, ACTIVE, PAUSED, COMPLETED, ARCHIVED
+  notes         String?
+  categoryId    String?
+  scopeId       String?
+  subcategoryId String?
+  costCenterId  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
-  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  category  Category? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  household   Household            @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  category    Category?            @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  scope       FinancialScope?      @relation(fields: [scopeId], references: [id], onDelete: SetNull)
+  subcategory CategorySubcategory? @relation(fields: [subcategoryId], references: [id], onDelete: SetNull)
+  costCenter  CostCenter?          @relation(fields: [costCenterId], references: [id], onDelete: SetNull)
 
-  @@unique([householdId, categoryId, month, year])
+  @@index([householdId, status, startDate, endDate])
+  @@index([householdId, categoryId])
+  @@index([householdId, scopeId])
 }
 
 model Goal {
-  id            String   @id @default(uuid())
-  householdId   String
-  name          String
-  description   String?
-  targetAmount  Decimal
-  currentAmount Decimal  @default(0.00)
-  targetDate    DateTime
-  category      String?
-  priority      String   @default("MEDIUM") // LOW, MEDIUM, HIGH
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id               String   @id @default(uuid())
+  householdId      String
+  accountId        String?
+  scopeId          String?
+  name             String
+  description      String?
+  targetAmount     Decimal
+  currentAmount    Decimal  @default(0.00)
+  targetDate       DateTime
+  category         String?
+  priority         String   @default("MEDIUM") // LOW, MEDIUM, HIGH
+  deadlineFlexibility String @default("MODERATE") // STRICT, MODERATE, FLEXIBLE
+  status           String   @default("ACTIVE") // ACTIVE, PAUSED, COMPLETED, ARCHIVED
+  notes            String?
+  monthlyContribution Decimal? @default(0.00)
+  archivedAt       DateTime?
+  archivedByUserId String?
+  profileId        String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
-  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  household        Household       @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  account          Account?        @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  profile          FamilyProfile?  @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  scope            FinancialScope? @relation(fields: [scopeId], references: [id], onDelete: SetNull)
+  lifecycleHistory GoalLifecycleHistory[]
+  fundingPlans     GoalFundingPlan[]
+  projects         Project[]
 }
 
 model Investment {
-  id            String   @id @default(uuid())
-  householdId   String
-  accountId     String?
-  name          String
-  symbol        String?
-  type          String   @default("MUTUAL_FUND") // STOCK, MUTUAL_FUND, FIXED_DEPOSIT, GOLD, EPF_PPF, OTHER
-  quantity      Decimal  @default(1.0000)
-  purchasePrice Decimal
-  currentPrice  Decimal
-  lastUpdated   DateTime @default(now())
-  notes         String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id                   String                      @id @default(uuid())
+  householdId          String
+  scopeId              String?
+  name                 String
+  category             String                      @default("MUTUAL_FUND") // STOCK, MUTUAL_FUND, BOND, FIXED_DEPOSIT, GOLD, RETIREMENT, OTHER
+  type                 String                      @default("MUTUAL_FUND") // Legacy type field
+  symbol               String?
+  currency             String                      @default("INR")
+  status               String                      @default("DRAFT") // DRAFT, ACTIVE, PARTIALLY_SOLD, CLOSED, ARCHIVED
+  description          String?
+  totalQuantity        Decimal                     @default(0.00000000)
+  totalCostBasis       Decimal                     @default(0.00)
+  weightedAverageCost  Decimal                     @default(0.00)
+  currentPricePerUnit  Decimal                     @default(0.00)
+  currentMarketValue   Decimal                     @default(0.00)
+  realizedGainLoss     Decimal                     @default(0.00)
+  notes                String?
+  investmentAccountId  String?
+  closedAt             DateTime?
+  archivedAt           DateTime?
+  archivedByUserId     String?
+  profileId            String?
+  createdAt            DateTime                    @default(now())
+  updatedAt            DateTime                    @updatedAt
 
-  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  account   Account?  @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  household            Household                   @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  profile              FamilyProfile?              @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  scope                FinancialScope?             @relation(fields: [scopeId], references: [id], onDelete: SetNull)
+  investmentAccount    Account?                    @relation("InvestmentAccountRef", fields: [investmentAccountId], references: [id], onDelete: SetNull)
+  lots                 InvestmentLot[]
+  financialEvents      InvestmentFinancialEvent[]
+  lifecycleHistory     InvestmentLifecycleHistory[]
+  activities           InvestmentActivity[]
+}
+
+model InvestmentLot {
+  id                String     @id @default(uuid())
+  investmentId      String
+  householdId       String
+  quantity          Decimal    @default(0.00000000)
+  remainingQuantity Decimal    @default(0.00000000)
+  costPerUnit       Decimal    @default(0.00)
+  totalCost         Decimal    @default(0.00)
+  purchaseDate      DateTime   @default(now())
+  createdAt         DateTime   @default(now())
+
+  investment        Investment @relation(fields: [investmentId], references: [id], onDelete: Cascade)
+
+  @@index([investmentId])
+}
+
+model InvestmentFinancialEvent {
+  id                String      @id @default(uuid())
+  investmentId      String
+  householdId       String
+  eventType         String      // BUY, SELL, DIVIDEND, INTEREST, FEE, REVALUATION, REVERSAL
+  quantity          Decimal?    @default(0.00000000)
+  pricePerUnit      Decimal?    @default(0.00)
+  amount            Decimal     @default(0.00)
+  costBasis         Decimal?    @default(0.00)
+  gainOrLoss        Decimal?    @default(0.00)
+  journalId         String?
+  reversalOfEventId String?     @unique
+  isReversed        Boolean     @default(false)
+  effectiveDate     DateTime    @default(now())
+  reason            String?
+  idempotencyKey    String?     @unique
+  createdByUserId   String?
+  createdAt         DateTime    @default(now())
+
+  investment        Investment  @relation(fields: [investmentId], references: [id], onDelete: Cascade)
+  household         Household   @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  journal           Journal?    @relation(fields: [journalId], references: [id], onDelete: SetNull)
+
+  reversalOf        InvestmentFinancialEvent?  @relation("InvestmentEventReversals", fields: [reversalOfEventId], references: [id], onDelete: SetNull)
+  reversals         InvestmentFinancialEvent[] @relation("InvestmentEventReversals")
+
+  @@index([investmentId, effectiveDate])
+  @@index([householdId, effectiveDate])
+}
+
+model InvestmentLifecycleHistory {
+  id           String     @id @default(uuid())
+  investmentId String
+  fromStatus   String
+  toStatus     String
+  action       String
+  reason       String?
+  performedBy  String?
+  createdAt    DateTime   @default(now())
+
+  investment   Investment @relation(fields: [investmentId], references: [id], onDelete: Cascade)
+
+  @@index([investmentId])
 }
 
 model Asset {
-  id           String    @id @default(uuid())
-  householdId  String
-  name         String
-  type         String    @default("OTHER") // REAL_ESTATE, VEHICLE, GOLD, JEWELRY, ELECTRONICS, OTHER
-  value        Decimal
-  purchaseDate DateTime?
-  notes        String?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id                   String                @id @default(uuid())
+  householdId          String
+  scopeId              String?
+  costCenterId         String?
+  name                 String
+  category             String                @default("OTHER") // PROPERTY, LAND, VEHICLE, EQUIPMENT, GOLD, LIVESTOCK, OTHER
+  type                 String                @default("OTHER")
+  status               String                @default("DRAFT") // DRAFT, ACTIVE, DISPOSED, ARCHIVED
+  fundingEligibility   String                @default("OPTIONAL") // NOT_ELIGIBLE, OPTIONAL, ELIGIBLE
+  description          String?
+  initialValue         Decimal               @default(0.00)
+  currentValue         Decimal               @default(0.00)
+  value                Decimal               @default(0.00)
+  purchaseDate         DateTime?
+  acquisitionDate      DateTime?
+  disposedAt           DateTime?
+  disposalProceeds     Decimal?
+  notes                String?
+  assetAccountId       String?
+  acquisitionJournalId String?
+  archivedAt           DateTime?
+  archivedByUserId     String?
+  profileId            String?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
 
+  household            Household             @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  profile              FamilyProfile?        @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  scope                FinancialScope?       @relation(fields: [scopeId], references: [id], onDelete: SetNull)
+  costCenter           CostCenter?           @relation(fields: [costCenterId], references: [id], onDelete: SetNull)
+  assetAccount         Account?              @relation("AssetAccountRef", fields: [assetAccountId], references: [id], onDelete: SetNull)
+  acquisitionJournal   Journal?              @relation("AssetAcquisitionJournal", fields: [acquisitionJournalId], references: [id], onDelete: SetNull)
+  valuations           AssetValuation[]
+  financialEvents      AssetFinancialEvent[]
+  lifecycleHistory     AssetLifecycleHistory[]
+  borrowings           Borrowing[]
+}
+
+model AssetFinancialEvent {
+  id              String   @id @default(uuid())
+  assetId         String
+  householdId     String
+  eventType       String   // ACQUISITION, REVALUATION, IMPROVEMENT, DEPRECIATION, DISPOSAL
+  amount          Decimal  @default(0.00)
+  gainOrLoss      Decimal? @default(0.00)
+  journalId       String?
+  effectiveDate   DateTime @default(now())
+  reason          String?
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+
+  asset     Asset     @relation(fields: [assetId], references: [id], onDelete: Cascade)
   household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  journal   Journal?  @relation(fields: [journalId], references: [id], onDelete: SetNull)
+
+  @@index([assetId, effectiveDate])
+  @@index([householdId, effectiveDate])
+}
+
+model AssetLifecycleHistory {
+  id          String   @id @default(uuid())
+  assetId     String
+  fromStatus  String
+  toStatus    String
+  action      String
+  reason      String?
+  performedBy String?
+  createdAt   DateTime @default(now())
+
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
 }
 
 model Liability {
-  id             String    @id @default(uuid())
-  householdId    String
-  name           String
-  type           String    @default("OTHER") // MORTGAGE, PERSONAL_LOAN, CAR_LOAN, EDUCATION_LOAN, CREDIT_CARD_DEBT, OTHER
-  amount         Decimal
-  interestRate   Decimal?
-  monthlyPayment Decimal?
-  dueDate        DateTime?
-  notes          String?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id                   String                      @id @default(uuid())
+  householdId          String
+  scopeId              String?
+  costCenterId         String?
+  name                 String
+  category             String                      @default("OTHER") // LOAN, MORTGAGE, CREDIT_CARD, PERSONAL_DEBT, PAYABLE, OTHER
+  type                 String                      @default("OTHER") // MORTGAGE, PERSONAL_LOAN, CAR_LOAN, EDUCATION_LOAN, CREDIT_CARD_DEBT, OTHER
+  status               String                      @default("DRAFT") // DRAFT, ACTIVE, PARTIALLY_SETTLED, SETTLED, ARCHIVED
+  description          String?
+  principalAmount      Decimal                     @default(0.00)
+  outstandingAmount    Decimal                     @default(0.00)
+  interestRate         Decimal                     @default(0.00)
+  startDate            DateTime?
+  dueDate              DateTime?
+  lender               String?
+  notes                String?
+  liabilityAccountId   String?
+  borrowJournalId      String?
+  archivedAt           DateTime?
+  archivedByUserId     String?
+  createdAt            DateTime                    @default(now())
+  updatedAt            DateTime                    @updatedAt
 
-  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  household            Household                   @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  scope                FinancialScope?             @relation(fields: [scopeId], references: [id], onDelete: SetNull)
+  costCenter           CostCenter?                 @relation(fields: [costCenterId], references: [id], onDelete: SetNull)
+  liabilityAccount     Account?                    @relation("LiabilityAccountRef", fields: [liabilityAccountId], references: [id], onDelete: SetNull)
+  borrowJournal        Journal?                    @relation("LiabilityBorrowJournal", fields: [borrowJournalId], references: [id], onDelete: SetNull)
+  financialEvents      LiabilityFinancialEvent[]
+  lifecycleHistory     LiabilityLifecycleHistory[]
+  borrowing            Borrowing?
+}
+
+model LiabilityFinancialEvent {
+  id              String    @id @default(uuid())
+  liabilityId     String
+  householdId     String
+  eventType       String    // BORROW, INTEREST_ACCRUED, INTEREST_PAID, REPAYMENT, SETTLEMENT
+  principalAmount Decimal   @default(0.00)
+  interestAmount  Decimal   @default(0.00)
+  totalAmount     Decimal   @default(0.00)
+  journalId       String?
+  effectiveDate   DateTime  @default(now())
+  reason          String?
+  idempotencyKey  String?   @unique
+  createdByUserId String?
+  createdAt       DateTime  @default(now())
+
+  liability       Liability @relation(fields: [liabilityId], references: [id], onDelete: Cascade)
+  household       Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  journal         Journal?  @relation(fields: [journalId], references: [id], onDelete: SetNull)
+
+  @@index([liabilityId, effectiveDate])
+  @@index([householdId, effectiveDate])
+}
+
+model LiabilityLifecycleHistory {
+  id          String    @id @default(uuid())
+  liabilityId String
+  fromStatus  String
+  toStatus    String
+  action      String
+  reason      String?
+  performedBy String?
+  createdAt   DateTime  @default(now())
+
+  liability   Liability @relation(fields: [liabilityId], references: [id], onDelete: Cascade)
+
+  @@index([liabilityId])
 }
 
 model ForecastScenario {
   id                     String              @id @default(uuid())
   householdId            String
   name                   String              @default("Baseline 2026-2050")
+  type                   String              @default("BASELINE") // BASELINE, CONSERVATIVE, OPTIMISTIC, CUSTOM
   isDefault              Boolean             @default(true)
   startYear              Int                 @default(2026)
   endYear                Int                 @default(2050)
+  horizonMonths          Int                 @default(12)
+  incomeGrowthRate       Decimal             @default(5.00)
+  expenseInflationRate   Decimal             @default(6.00)
+  investmentReturnRate   Decimal             @default(10.00)
+  assetGrowthRate        Decimal             @default(5.00)
+  assumptionsVersion     Int                 @default(1)
   inflationRate          Decimal             @default(6.00)
   salaryGrowthRate       Decimal             @default(8.00)
-  investmentReturnRate   Decimal             @default(11.00)
   retirementAge          Int                 @default(60)
   baselineMonthlySavings Decimal             @default(50000.00)
   notes                  String?
@@ -279,6 +701,7 @@ model ForecastScenario {
   updatedAt              DateTime            @updatedAt
   household              Household           @relation(fields: [householdId], references: [id], onDelete: Cascade)
   milestones             ForecastMilestone[]
+  snapshots              ForecastSnapshot[]
 }
 
 model ForecastMilestone {
@@ -292,12 +715,30 @@ model ForecastMilestone {
   scenario      ForecastScenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
 }
 
+model ForecastSnapshot {
+  id                 String           @id @default(uuid())
+  householdId        String
+  scenarioId         String
+  calculationId      String           @unique
+  startDate          DateTime
+  horizonMonths      Int              @default(12)
+  assumptionsVersion Int              @default(1)
+  resultJson         String
+  generatedAt        DateTime         @default(now())
+
+  household Household        @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  scenario  ForecastScenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+
+  @@index([householdId, scenarioId])
+}
+
 model IncomeSource {
   id               String             @id @default(uuid())
   householdId      String
   name             String
   category         String             @default("Other") // Salary, Business, Agriculture, Sericulture, Livestock/Goat Farming, Rental, Freelance/Consulting, Interest/Dividends, Other
   categoryId       String?
+  scopeId          String?
   description      String?
   defaultAccountId String?
   expectedAmount   Decimal?
@@ -314,6 +755,7 @@ model IncomeSource {
   household      Household           @relation(fields: [householdId], references: [id], onDelete: Cascade)
   defaultAccount Account?             @relation(fields: [defaultAccountId], references: [id], onDelete: SetNull)
   categoryRef    Category?            @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  scope          FinancialScope?      @relation(fields: [scopeId], references: [id], onDelete: SetNull)
   occurrences    IncomeOccurrence[]
   transactions   Transaction[]
   employments    EmploymentProfile[]
@@ -330,14 +772,29 @@ model IncomeOccurrence {
   expectedAmount    Decimal
   receivedAmount    Decimal       @default(0.00)
   outstandingAmount Decimal
-  status            String        @default("PENDING") // PENDING, PARTIALLY_RECEIVED, FULLY_RECEIVED, SKIPPED
+  grossAmount       Decimal?      @default(0.00)
+  deductionsAmount  Decimal?      @default(0.00)
+  taxWithheld       Decimal?      @default(0.00)
+  netAmount         Decimal?      @default(0.00)
+  status            String        @default("EXPECTED") // EXPECTED, CONFIRMED, CREDITED, RECONCILED, CANCELLED, REVERSED, ARCHIVED
+  confirmedAt       DateTime?
+  creditedAt        DateTime?
+  reconciledAt      DateTime?
+  cancelledAt       DateTime?
+  cancelledReason   String?
+  archivedAt        DateTime?
+  archivedByUserId  String?
+  idempotencyKey    String?       @unique
+  journalId         String?       @unique
+  journal           Journal?      @relation(fields: [journalId], references: [id], onDelete: SetNull)
   notes             String?
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
 
-  household    Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  incomeSource IncomeSource  @relation(fields: [incomeSourceId], references: [id], onDelete: Cascade)
-  transactions Transaction[]
+  household        Household               @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  incomeSource     IncomeSource            @relation(fields: [incomeSourceId], references: [id], onDelete: Cascade)
+  transactions     Transaction[]
+  lifecycleHistory IncomeLifecycleHistory[]
 }
 
 model RecurringBillOccurrence {
@@ -436,3 +893,688 @@ model PayslipRecord {
 
   @@unique([employmentId, month, year])
 }
+
+model AutomationRule {
+  id              String                   @id @default(uuid())
+  householdId     String
+  createdByUserId String?
+  name            String
+  triggerType     String                   // TRANSACTION_CREATED, SCHEDULED_CRON, BUDGET_THRESHOLD, RECURRING_DUE
+  conditionJson   String                   // Validated JSON condition rules
+  actionType      String                   // CATEGORIZE_TRANSACTION, GENERATE_ALERT, FLAG_DUPLICATE
+  actionJson      String                   // Validated JSON action parameters
+  isActive        Boolean                  @default(true)
+  ruleVersion     Int                      @default(1)
+  lastRunAt       DateTime?
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+
+  household       Household                @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  logs            AutomationExecutionLog[]
+}
+
+model AutomationExecutionLog {
+  id              String          @id @default(uuid())
+  householdId     String
+  ruleId          String?
+  ruleVersionSnap Int             @default(1)
+  idempotencyKey  String?         @unique
+  alertKey        String?         @unique
+  triggerType     String
+  status          String          // SUCCESS, FAILED, PENDING_REVIEW
+  details         String
+  executedAt      DateTime        @default(now())
+
+  household       Household       @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  rule            AutomationRule? @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+}
+
+model Journal {
+  id             String         @id @default(uuid())
+  householdId    String
+  date           DateTime       @default(now())
+  referenceNo    String?
+  description    String
+  status         String         @default("POSTED") // POSTED, VOIDED
+  idempotencyKey String?        @unique
+  reversalOfId String?        @unique
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  household   Household      @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  entries     JournalEntry[]
+  reversalOf  Journal?       @relation("JournalReversals", fields: [reversalOfId], references: [id], onDelete: SetNull)
+  reversals   Journal[]      @relation("JournalReversals")
+  transaction Transaction?
+  incomeOccurrence IncomeOccurrence?
+  assetAcquisitions Asset[]   @relation("AssetAcquisitionJournal")
+  assetFinancialEvents AssetFinancialEvent[]
+  borrowLiabilities Liability[] @relation("LiabilityBorrowJournal")
+  liabilityFinancialEvents LiabilityFinancialEvent[]
+  investmentFinancialEvents InvestmentFinancialEvent[]
+  borrowingDisbursements Borrowing[] @relation("BorrowingDisbursementJournal")
+  borrowingFinancialEvents BorrowingFinancialEvent[]
+
+  @@index([householdId])
+  @@index([householdId, status, date])
+}
+
+model JournalEntry {
+  id          String   @id @default(uuid())
+  journalId   String
+  accountId   String?
+  debit       Decimal  @default(0.00)
+  credit      Decimal  @default(0.00)
+  description String?
+
+  journal Journal  @relation(fields: [journalId], references: [id], onDelete: Cascade)
+  account Account? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  @@index([journalId])
+  @@index([accountId])
+}
+
+model InvestmentActivity {
+  id           String     @id @default(uuid())
+  investmentId String
+  type         String     @default("BUY") // BUY, SELL, DIVIDEND
+  quantity     Decimal    @default(0.0000)
+  pricePerUnit Decimal    @default(0.00)
+  totalAmount  Decimal    @default(0.00)
+  date         DateTime   @default(now())
+  notes        String?
+  createdAt    DateTime   @default(now())
+
+  investment Investment @relation(fields: [investmentId], references: [id], onDelete: Cascade)
+
+  @@index([investmentId])
+}
+
+model AssetValuation {
+  id            String   @id @default(uuid())
+  assetId       String
+  value         Decimal
+  valuationDate DateTime @default(now())
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([assetId])
+}
+
+model TransactionLifecycleHistory {
+  id            String      @id @default(uuid())
+  transactionId String
+  fromStatus    String
+  toStatus      String
+  action        String
+  reason        String?
+  performedBy   String?
+  createdAt     DateTime    @default(now())
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@index([transactionId])
+}
+
+model IncomeLifecycleHistory {
+  id                 String           @id @default(uuid())
+  incomeOccurrenceId String
+  fromStatus         String
+  toStatus           String
+  action             String
+  reason             String?
+  performedBy        String?
+  createdAt          DateTime         @default(now())
+
+  incomeOccurrence   IncomeOccurrence @relation(fields: [incomeOccurrenceId], references: [id], onDelete: Cascade)
+
+  @@index([incomeOccurrenceId])
+}
+
+model GoalLifecycleHistory {
+  id          String   @id @default(uuid())
+  goalId      String
+  fromStatus  String
+  toStatus    String
+  action      String
+  reason      String?
+  performedBy String?
+  createdAt   DateTime @default(now())
+
+  goal Goal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+
+  @@index([goalId])
+}
+
+model AuditEvent {
+  id           String   @id @default(uuid())
+  householdId  String
+  entityType   String
+  entityId     String
+  action       String
+  fromState    String?
+  toState      String?
+  actorUserId  String
+  reason       String?
+  metadataJson String?
+  previousHash String?
+  eventHash    String
+  createdAt    DateTime @default(now())
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId])
+  @@index([entityType, entityId])
+  @@index([actorUserId])
+  @@index([createdAt])
+}
+
+model AlertEvent {
+  id           String    @id @default(uuid())
+  fingerprint  String    @unique
+  alertType    String    // BALANCE_DRIFT, UNBALANCED_JOURNAL, AUDIT_TAMPER, TENANT_LEAK, IDEMPOTENCY_ABUSE, BACKUP_FAILURE, MONITOR_STALE, PERFORMANCE_DEGRADATION
+  severity     String    @default("P1_HIGH") // P0_CRITICAL, P1_HIGH, P2_MEDIUM
+  status       String    @default("OPEN") // OPEN, ACKNOWLEDGED, RESOLVED, SUPPRESSED
+  householdId  String?
+  entityType   String?
+  entityId     String?
+  message      String
+  evidenceJson String?
+  detectedAt   DateTime  @default(now())
+  resolvedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  household    Household? @relation(fields: [householdId], references: [id], onDelete: SetNull)
+
+  @@index([alertType])
+  @@index([status])
+  @@index([severity])
+  @@index([householdId])
+}
+
+model MonitorHeartbeat {
+  id                String   @id @default("PRIMARY_MONITOR")
+  lastScanTimestamp DateTime @default(now())
+  scansCount        Int      @default(0)
+  status            String   @default("HEALTHY") // HEALTHY, STALE
+  updatedAt         DateTime @updatedAt
+}
+
+model Lender {
+  id          String      @id @default(uuid())
+  householdId String
+  name        String
+  type        String      @default("BANK") // BANK, NBFC, FAMILY, FRIEND, PRIVATE_LENDER, EMPLOYER, OTHER
+  contactInfo String?
+  notes       String?
+  isActive    Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  household   Household   @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  borrowings  Borrowing[]
+
+  @@unique([householdId, name])
+  @@index([householdId])
+}
+
+model Borrowing {
+  id                    String                      @id @default(uuid())
+  householdId           String
+  lenderId              String?
+  scopeId               String?
+  categoryId            String?
+  subcategoryId         String?
+  costCenterId          String?
+  assetId               String?
+  liabilityAccountId    String?
+  receivingAccountId    String?
+  disbursementJournalId String?
+  liabilityId           String?                     @unique
+
+  name                  String
+  description           String?
+  borrowingType         String                      @default("TERM_LOAN") // TERM_LOAN, EMI_LOAN, LINE_OF_CREDIT, MORTGAGE, VEHICLE_LOAN, PERSONAL_LOAN, BUSINESS_LOAN, PEER_BORROWING, OTHER
+  financingType         String                      @default("SECURED") // SECURED, UNSECURED
+  repaymentMethod       String                      @default("AMORTIZED_EMI") // AMORTIZED_EMI, BULLET, INTEREST_ONLY, FLEXIBLE, BALLOON
+  purpose               String?
+  principalAmount       Decimal                     @default(0.00)
+  interestRate          Decimal                     @default(0.00) // Annual percentage rate
+  tenureMonths          Int?                        @default(12)
+  outstandingPrincipal  Decimal                     @default(0.00)
+  totalPrincipalPaid    Decimal                     @default(0.00)
+  totalInterestPaid     Decimal                     @default(0.00)
+  startDate             DateTime?
+  maturityDate          DateTime?
+  firstPaymentDate      DateTime?
+  status                String                      @default("DRAFT") // DRAFT, ACTIVE, PARTIALLY_SETTLED, SETTLED, CANCELLED, ARCHIVED
+  archivedAt            DateTime?
+  archivedByUserId      String?
+  profileId             String?
+  createdAt             DateTime                    @default(now())
+  updatedAt             DateTime                    @updatedAt
+
+  household             Household                   @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  profile               FamilyProfile?              @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  lender                Lender?                     @relation(fields: [lenderId], references: [id], onDelete: SetNull)
+  scope                 FinancialScope?             @relation(fields: [scopeId], references: [id], onDelete: SetNull)
+  category              Category?                   @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  subcategory           CategorySubcategory?        @relation(fields: [subcategoryId], references: [id], onDelete: SetNull)
+  costCenter            CostCenter?                 @relation(fields: [costCenterId], references: [id], onDelete: SetNull)
+  asset                 Asset?                      @relation(fields: [assetId], references: [id], onDelete: SetNull)
+  liabilityAccount      Account?                    @relation("BorrowingLiabilityAccount", fields: [liabilityAccountId], references: [id], onDelete: SetNull)
+  receivingAccount      Account?                    @relation("BorrowingReceivingAccount", fields: [receivingAccountId], references: [id], onDelete: SetNull)
+  disbursementJournal   Journal?                    @relation("BorrowingDisbursementJournal", fields: [disbursementJournalId], references: [id], onDelete: SetNull)
+  legacyLiability       Liability?                  @relation(fields: [liabilityId], references: [id], onDelete: SetNull)
+
+  schedules             RepaymentSchedule[]
+  installments          RepaymentInstallment[]
+  financialEvents       BorrowingFinancialEvent[]
+  lifecycleHistory      BorrowingLifecycleHistory[]
+
+  @@index([householdId])
+  @@index([householdId, status])
+  @@index([lenderId])
+  @@index([scopeId])
+}
+
+model RepaymentSchedule {
+  id                String                 @id @default(uuid())
+  householdId       String
+  borrowingId       String
+  frequency         String                 @default("MONTHLY") // MONTHLY, QUARTERLY, HALF_YEARLY, YEARLY, BULLET
+  startDate         DateTime
+  endDate           DateTime
+  totalInstallments Int                    @default(0)
+  totalPrincipal    Decimal                @default(0.00)
+  totalInterest     Decimal                @default(0.00)
+  totalAmount       Decimal                @default(0.00)
+  status            String                 @default("ACTIVE") // ACTIVE, SUPERSEDED, CANCELLED
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  household         Household              @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  borrowing         Borrowing              @relation(fields: [borrowingId], references: [id], onDelete: Cascade)
+  installments      RepaymentInstallment[]
+
+  @@index([borrowingId])
+  @@index([householdId])
+}
+
+model RepaymentInstallment {
+  id                String            @id @default(uuid())
+  householdId       String
+  borrowingId       String
+  scheduleId        String?
+  installmentNumber Int
+  dueDate           DateTime
+  principalAmount   Decimal           @default(0.00)
+  interestAmount    Decimal           @default(0.00)
+  totalAmount       Decimal           @default(0.00)
+  paidPrincipal     Decimal           @default(0.00)
+  paidInterest      Decimal           @default(0.00)
+  paidAmount        Decimal           @default(0.00)
+  remainingAmount   Decimal           @default(0.00)
+  status            String            @default("UPCOMING") // UPCOMING, DUE, PARTIALLY_PAID, PAID, OVERDUE, WAIVED, CANCELLED
+  paidAt            DateTime?
+  notes             String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  household         Household         @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  borrowing         Borrowing         @relation(fields: [borrowingId], references: [id], onDelete: Cascade)
+  schedule          RepaymentSchedule? @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@unique([borrowingId, installmentNumber])
+  @@index([borrowingId, dueDate])
+  @@index([householdId, status, dueDate])
+}
+
+model BorrowingFinancialEvent {
+  id                String                   @id @default(uuid())
+  householdId       String
+  borrowingId       String
+  eventType         String                   // DISBURSEMENT, REPAYMENT, EMI_PAYMENT, INTEREST_ACCRUED, SETTLEMENT, REVERSAL
+  principalAmount   Decimal                  @default(0.00)
+  interestAmount    Decimal                  @default(0.00)
+  totalAmount       Decimal                  @default(0.00)
+  journalId         String?
+  reversalOfEventId String?                  @unique
+  isReversed        Boolean                  @default(false)
+  effectiveDate     DateTime                 @default(now())
+  reason            String?
+  idempotencyKey    String?                  @unique
+  createdByUserId   String?
+  createdAt         DateTime                 @default(now())
+
+  household         Household                @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  borrowing         Borrowing                @relation(fields: [borrowingId], references: [id], onDelete: Cascade)
+  journal           Journal?                 @relation(fields: [journalId], references: [id], onDelete: SetNull)
+  reversalOfEvent   BorrowingFinancialEvent? @relation("BorrowingEventReversals", fields: [reversalOfEventId], references: [id], onDelete: SetNull)
+  reversalEvent     BorrowingFinancialEvent? @relation("BorrowingEventReversals")
+
+  @@index([borrowingId, effectiveDate])
+  @@index([householdId, effectiveDate])
+}
+
+model BorrowingLifecycleHistory {
+  id          String    @id @default(uuid())
+  householdId String
+  borrowingId String
+  fromStatus  String
+  toStatus    String
+  action      String
+  reason      String?
+  performedBy String?
+  createdAt   DateTime  @default(now())
+
+  borrowing   Borrowing @relation(fields: [borrowingId], references: [id], onDelete: Cascade)
+
+  @@index([borrowingId])
+  @@index([householdId])
+}
+
+model FundingAssumptionSet {
+  id                     String    @id @default(uuid())
+  householdId            String
+  version                Int       @default(1)
+  name                   String    @default("Standard Assumption Set")
+  effectiveFrom          DateTime  @default(now())
+  effectiveTo            DateTime?
+  fixedIncomeLow         Decimal   @default(5.00) // % annual return
+  fixedIncomeBase        Decimal   @default(6.50)
+  fixedIncomeHigh        Decimal   @default(7.50)
+  investmentLow          Decimal   @default(7.00)
+  investmentBase         Decimal   @default(11.00)
+  investmentHigh         Decimal   @default(14.00)
+  emergencyReserveMonths Int       @default(6) // Months of essential expenses
+  maxDebtServiceRatio    Decimal   @default(0.35) // Max 35% of monthly surplus towards EMI
+  borrowingAnnualInterestRate Decimal? // Explicit user or configured borrowing rate assumption (e.g. 10.50), null if UNKNOWN
+  essentialExpenseRatio  Decimal?  // Explicit user or configured ratio of essential to total expenses (e.g. 0.70), null if UNKNOWN
+  active                 Boolean   @default(true)
+  notes                  String?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  household              Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@unique([householdId, version])
+  @@index([householdId, active])
+}
+
+model GoalFundingPlan {
+  id                      String    @id @default(uuid())
+  householdId             String
+  goalId                  String
+  version                 Int       @default(1)
+  parentPlanId            String?
+  status                  String    @default("PROPOSED") // DRAFT, PROPOSED, USER_APPROVED, ACTIVE, COMPLETED, CANCELLED, REVIEW_REQUIRED
+  strategyType            String    // SAVE, FIXED_INCOME, INVEST, SELL_ASSET, EXTEND_DEADLINE, RAISE_INCOME, BORROW, COMBINATION
+  name                    String
+  score                   Float     @default(0.0)
+  monthlyBurden           Decimal   @default(0.00)
+  totalCost               Decimal   @default(0.00)
+  riskScore               Float     @default(0.0)
+  liquidityScore          Float     @default(100.0)
+  flexibilityScore        Float     @default(100.0)
+  projectedLow            Decimal   @default(0.00)
+  projectedBase           Decimal   @default(0.00)
+  projectedHigh           Decimal   @default(0.00)
+  fundingGap              Decimal   @default(0.00)
+  projectedCompletionDate DateTime?
+  planDetailsJson         String    // Strict schema PlanDetails JSON
+  snapshotJson            String    // Strict schema FinancialSnapshot JSON
+  reasonCodes             String    // JSON array of reason codes
+  assumptionSetVersion    Int       @default(1)
+  rankingModelVersion     Int       @default(1)
+  rankingWeightsJson      String?   // JSON object of weights used
+  calculationDate         DateTime  @default(now())
+  approvedAt              DateTime?
+  approvedByUserId        String?
+  supersededAt            DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  household               Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  goal                    Goal      @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  parentPlan              GoalFundingPlan? @relation("PlanVersions", fields: [parentPlanId], references: [id], onDelete: SetNull)
+  childPlans              GoalFundingPlan[] @relation("PlanVersions")
+  history                 GoalFundingPlanLifecycleHistory[]
+
+  @@unique([goalId, version])
+  @@index([householdId, goalId, status])
+}
+
+model GoalFundingPlanLifecycleHistory {
+  id          String   @id @default(uuid())
+  planId      String
+  householdId String
+  fromStatus  String
+  toStatus    String
+  action      String   // CREATE, PROPOSE, APPROVE, ACTIVATE, REVIEW_REQUIRED, SUPERSEDE, COMPLETE, CANCEL
+  reason      String?
+  performedBy String?
+  metadataJson String?
+  createdAt   DateTime @default(now())
+
+  plan        GoalFundingPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@index([planId])
+  @@index([householdId])
+}
+
+// =========================================================================
+// UNIVERSAL PROJECT & FINANCIAL PLANNING ENGINE v2
+// =========================================================================
+
+model Project {
+  id               String    @id @default(uuid())
+  householdId      String
+  name             String
+  description      String?
+  notes            String?
+  projectType      String    @default("PERSONAL") // PERSONAL, FAMILY, MARRIAGE, HOME, PROPERTY, AGRICULTURE, LIVESTOCK, BUSINESS, EQUIPMENT, EDUCATION, VEHICLE, OTHER
+  status           String    @default("DRAFT")    // DRAFT, PLANNED, ACTIVE, ON_HOLD, COMPLETED, CANCELLED, ARCHIVED
+  priority         String    @default("MEDIUM")   // LOW, MEDIUM, HIGH, URGENT
+  startDate        DateTime?
+  targetDate       DateTime?
+  completedAt      DateTime?
+  ownerMemberId    String?
+  primaryGoalId    String?
+  profileId        String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  version          Int       @default(1)
+
+  household        Household                   @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  profile          FamilyProfile?              @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  primaryGoal      Goal?                       @relation(fields: [primaryGoalId], references: [id], onDelete: SetNull)
+  financialPlans   ProjectFinancialPlan[]
+  costItems        ProjectCostItem[]
+  payments         ProjectPaymentRequirement[]
+  fundingSources   ProjectFundingSource[]
+  tasks            ProjectTask[]
+  milestones       ProjectMilestone[]
+  lifecycleHistory ProjectLifecycleHistory[]
+
+  @@index([householdId])
+  @@index([householdId, status])
+  @@index([primaryGoalId])
+}
+
+model ProjectFinancialPlan {
+  id                 String    @id @default(uuid())
+  projectId          String
+  householdId        String
+  version            Int       @default(1)
+  estimatedTotalCost Decimal   @default(0.00)
+  planningStatus     String    @default("ACTIVE") // ACTIVE, SUPERSEDED, CANCELLED
+  notes              String?
+  reason             String?
+  createdByUserId    String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  project            Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, version])
+  @@index([projectId, planningStatus])
+  @@index([householdId])
+}
+
+model ProjectCostItem {
+  id            String                      @id @default(uuid())
+  projectId     String
+  householdId   String
+  name          String
+  description   String?
+  plannedAmount Decimal                     @default(0.00)
+  dueDate       DateTime?
+  categoryId    String?
+  priority      String                      @default("MEDIUM") // LOW, MEDIUM, HIGH
+  status        String                      @default("PLANNED") // PLANNED, COMMITTED, COMPLETED, CANCELLED
+  createdAt     DateTime                    @default(now())
+  updatedAt     DateTime                    @updatedAt
+
+  project       Project                     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  category      Category?                   @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  payments      ProjectPaymentRequirement[]
+
+  @@index([projectId])
+  @@index([householdId])
+  @@index([categoryId])
+}
+
+model ProjectPaymentRequirement {
+  id              String                     @id @default(uuid())
+  projectId       String
+  householdId     String
+  costItemId      String?
+  name            String
+  dueDate         DateTime?
+  plannedAmount   Decimal                    @default(0.00)
+  committedAmount Decimal                    @default(0.00)
+  paidAmount      Decimal                    @default(0.00)
+  status          String                     @default("PLANNED") // PLANNED, COMMITTED, PARTIALLY_PAID, PAID, OVERDUE, CANCELLED
+  createdAt       DateTime                   @default(now())
+  updatedAt       DateTime                   @updatedAt
+
+  project         Project                    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  costItem        ProjectCostItem?           @relation(fields: [costItemId], references: [id], onDelete: SetNull)
+  allocations     ProjectPaymentAllocation[]
+
+  @@index([projectId])
+  @@index([householdId])
+  @@index([status])
+}
+
+model ProjectFundingSource {
+  id                 String    @id @default(uuid())
+  projectId          String
+  householdId        String
+  sourceType         String    @default("OWN_CASH") // OWN_CASH, INCOME, INVESTMENT, ASSET_SALE, BORROWING, OTHER
+  name               String
+  plannedAmount      Decimal   @default(0.00)
+  committedAmount    Decimal   @default(0.00)
+  receivedAmount     Decimal   @default(0.00)
+  status             String    @default("PLANNED") // PLANNED, COMMITTED, RECEIVED, ALLOCATED, USED, CANCELLED
+  notes              String?
+
+  linkedAccountId    String?
+  linkedBorrowingId  String?
+  linkedInvestmentId String?
+  linkedAssetId      String?
+  linkedGoalId       String?
+
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  project            Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([householdId])
+  @@index([sourceType])
+}
+
+model ProjectPaymentAllocation {
+  id                   String                    @id @default(uuid())
+  paymentRequirementId String
+  transactionId        String
+  householdId          String
+  allocatedAmount      Decimal                   @default(0.00)
+  notes                String?
+  createdAt            DateTime                  @default(now())
+
+  paymentRequirement   ProjectPaymentRequirement @relation(fields: [paymentRequirementId], references: [id], onDelete: Cascade)
+  transaction          Transaction               @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@index([paymentRequirementId])
+  @@index([transactionId])
+  @@index([householdId])
+}
+
+model ProjectTask {
+  id               String        @id @default(uuid())
+  projectId        String
+  householdId      String
+  title            String
+  description      String?
+  status           String        @default("TODO") // TODO, IN_PROGRESS, BLOCKED, COMPLETED, CANCELLED
+  priority         String        @default("MEDIUM") // LOW, MEDIUM, HIGH, URGENT
+  assignedMemberId String?
+  startDate        DateTime?
+  dueDate          DateTime?
+  parentTaskId     String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  project          Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  parentTask       ProjectTask?  @relation("SubTasks", fields: [parentTaskId], references: [id], onDelete: SetNull)
+  subTasks         ProjectTask[] @relation("SubTasks")
+
+  @@index([projectId])
+  @@index([householdId])
+  @@index([status])
+}
+
+model ProjectMilestone {
+  id          String    @id @default(uuid())
+  projectId   String
+  householdId String
+  title       String
+  description String?
+  targetDate  DateTime?
+  achievedAt  DateTime?
+  status      String    @default("PLANNED") // PLANNED, IN_PROGRESS, ACHIEVED, CANCELLED
+  order       Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([householdId])
+  @@index([status])
+}
+
+model ProjectLifecycleHistory {
+  id          String   @id @default(uuid())
+  projectId   String
+  householdId String
+  fromStatus  String
+  toStatus    String
+  action      String   // CREATE, PLAN, ACTIVATE, HOLD, RESUME, COMPLETE, CANCEL, ARCHIVE
+  reason      String?
+  performedBy String?
+  metadata    String?
+  createdAt   DateTime @default(now())
+
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([householdId])
+}
+
